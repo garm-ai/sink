@@ -1,0 +1,39 @@
+# Toolchain and tasks for garm-sink. `mise install` gets you a working
+# checkout; `mise run ci` is exactly what CI runs.
+#
+# Task names match the other garm-ai repositories on purpose: `mise run test`
+# means the same thing everywhere, so moving between repositories costs no
+# relearning. There is no `gen` task because there are no protos here — the
+# wire types come from github.com/garm-ai/garm.
+
+[tools]
+go = "1.26"
+
+[tasks.build]
+description = "Build every package"
+# CGO is not optional here. DuckDB is a static C library, and CGO_ENABLED=0
+# builds a binary whose Parquet writer fails at the first flush with a driver
+# that was never registered — at runtime, in production, after a green build.
+run = "CGO_ENABLED=1 go build ./..."
+
+[tasks.test]
+description = "Run the tests"
+# -race because the drain loop hands batches to a sink while JetStream
+# delivers into it, and a race there loses records rather than crashing.
+#
+# -timeout because Go's default is ten minutes: the tests here run an embedded
+# NATS server, and one waiting on a broker that never answers would sit there
+# for all of it. A CI job that hangs before failing is one nobody waits for.
+run = "CGO_ENABLED=1 go test ./... -race -count=1 -timeout 300s"
+
+[tasks.lint]
+description = "Vet the Go"
+run = "go vet ./..."
+
+[tasks.fmt]
+description = "Format"
+run = "go fmt ./..."
+
+[tasks.ci]
+description = "Everything CI runs"
+depends = ["lint", "build", "test"]

@@ -1,0 +1,92 @@
+# CI for garm-sink.
+#
+# Two jobs. The first is the ordinary one. The second asserts the boundary this
+# repository exists to hold — asserted rather than documented, because a single
+# careless import would end it silently.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      # DuckDB is cgo. The go-duckdb module ships prebuilt static libraries for
+      # linux-amd64, so nothing has to be compiled from source — but it does
+      # need a C toolchain to link against, and ubuntu-latest has one. This
+      # step is here to fail loudly on an image that does not, rather than
+      # letting the failure surface as an unregistered sql driver.
+      - name: the cgo toolchain is present
+        run: |
+          cc --version
+          go env CGO_ENABLED | grep -qx 1 || { echo "::error::CGO is disabled; the Parquet writer would not link" >&2; exit 1; }
+
+      - run: mise run lint
+      - run: mise run build
+      - run: mise run test
+
+  boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      # The inversion this repository is built on.
+      #
+      # garmd publishes to a NATS stream and this drains it. The contract
+      # between them is the wire format in garm-ai/garm and the subject names
+      # in its wire package — never a Go import, in either direction.
+      #
+      # An edge this way would put DuckDB (cgo, tens of megabytes of static
+      # library) and an S3 client into the dependency graph of a daemon that
+      # sits in a request path, and would make this repository's release
+      # cadence the daemon's problem. The reciprocal check belongs in garmd's
+      # own CI; this is the half that can be enforced here.
+      - name: no dependency on the daemon
+        run: |
+          if go list -deps ./... 2>/dev/null | grep -E 'garm-ai/garmd'; then
+            echo "::error::garm-sink depends on garmd; the record stream is data, not an import" >&2
+            exit 1
+          fi
+          echo "clean: garm-sink depends on no daemon"
+
+      # Nor on anything that implements tools, mints identities, or is the
+      # tool-side runtime. A lake reads records; it has no business linking
+      # anything that produces them.
+      - name: no dependency on a producer
+        run: |
+          if go list -deps ./... 2>/dev/null | grep -E 'garm-ai/(devkit|examples|tools|agent|tool-go|tool-python)'; then
+            echo "::error::garm-sink depends on something that produces records; it only reads them" >&2
+            exit 1
+          fi
+          echo "clean: garm-sink depends on no record producer"
+
+      # And the one edge that IS allowed must stay thin: the contracts, not the
+      # CLI's internals. Importing garm's policy compiler or command internals
+      # would make a Parquet writer's build depend on the contract language's.
+      - name: the only edge to garm is its contracts
+        run: |
+          if go list -deps ./... 2>/dev/null | grep -E 'garm-ai/garm/(internal|policy|cmd)'; then
+            echo "::error::garm-sink reaches past garm's contracts into its implementation" >&2
+            exit 1
+          fi
+          echo "clean: garm-sink uses garm's contracts only"

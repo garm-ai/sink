@@ -1,0 +1,24 @@
+# Build output. `go build ./cmd/<x>` drops a binary in the working directory
+# named after the package, so it is listed at the root as a backstop even
+# though bin/ is the documented output path.
+bin/
+/garm-sink
+
+# Test and coverage output
+*.out
+*.test
+coverage.*
+
+# Parquet written by a local run or a test that did not clean up. These are
+# tens of megabytes each by design.
+*.parquet
+
+# Editor and OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# mise's local overrides — the committed mise.toml is the shared toolchain
+mise.local.toml
+.mise.local.toml
