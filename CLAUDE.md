@@ -9,9 +9,17 @@ directory on this machine. One binary, `sinkd`, with three verbs: `provision`,
 
 **This repository has no import relationship with `garm-ai/garmd`, in either
 direction.** garmd publishes; this consumes. The contract is the wire format
-(`garm.ledger.v1.Event`) and the subject names in `garm/contracts/wire` — never
-a Go import. CI asserts it, and CI also asserts that the one allowed edge, to
-`garm-ai/garm`, reaches its contracts and nothing else.
+(`garm.ledger.v1.Event`) and the subject names in `github.com/garm-ai/contracts`
+— never a Go import. CI asserts it, and CI also asserts that the contract module
+is the ONLY garm-ai edge: `garm-ai/garm` is now the command line tool and nothing
+here may link it.
+
+The contract used to live inside `garm-ai/garm` as `contracts/…`; it was split
+out and flattened to the new module's root at contracts v0.2.0, so
+`garm/contracts/wire` is `contracts/wire` and `garm/contracts/garm/ledger/v1` is
+`contracts/garm/ledger/v1`. Between the old pin here (garm v0.8.0) and the new
+module the ledger changed in exactly one way: `execution_subject`, field 71,
+added at garm v0.14.0. It is not a Parquet column — see KNOWN-GAPS.md.
 
 It matters because of what is linked here: DuckDB, which is cgo, and minio.
 Neither belongs in a request path's dependency graph. Measured in the monorepo,

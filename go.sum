@@ -27,8 +27,8 @@ github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.21 h1:hhziFnGV7mpA+v5J5G
 github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.21/go.mod h1:IlOhJdVKUJCAPj3QsDszUo8DVdvp1nBFp4TUJVdw99s=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
-github.com/garm-ai/garm v0.8.0 h1:ZVk6snpvCVd0IVl7NLo0NGLnhKbqv0Ut14tXWHqRDqY=
-github.com/garm-ai/garm v0.8.0/go.mod h1:Vlb8Yuym87Zy4FBREZwmihlD9itTbr+2m/2kqYp8WoA=
+github.com/garm-ai/contracts v0.2.0 h1:iaUDj16dABG8xWBq/RG1Ybi7bc1Z9RunrwwpT05mABE=
+github.com/garm-ai/contracts v0.2.0/go.mod h1:93sBd/xmW9OrzHHxRj4H1Lh9ne4PPyDzlk9whdhc8LE=
 github.com/go-viper/mapstructure/v2 v2.5.0 h1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro=
 github.com/go-viper/mapstructure/v2 v2.5.0/go.mod h1:oJDH3BJKyqBA2TXFhDsKDGDTlndYOZ6rGS0BRZIxGhM=
 github.com/goccy/go-json v0.10.5 h1:Fq85nIqj+gXn/S5ahsiTlK3TmC85qgirsdTP/+DeaC4=

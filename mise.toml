@@ -4,7 +4,7 @@
 # Task names match the other garm-ai repositories on purpose: `mise run test`
 # means the same thing everywhere, so moving between repositories costs no
 # relearning. There is no `gen` task because there are no protos here — the
-# wire types come from github.com/garm-ai/garm.
+# wire types come from github.com/garm-ai/contracts.
 
 [tools]
 go = "1.26"

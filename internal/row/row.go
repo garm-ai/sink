@@ -1,10 +1,10 @@
 // Package row turns a wire message into Parquet rows.
 //
-// The wire type is garm.ledger.v1.Event, from github.com/garm-ai/garm. That
-// module is the ONLY thing this repository and garmd share: garmd publishes,
-// this drains, and neither imports the other. A Go import between them would
-// put DuckDB and an S3 client in a request path's dependency graph, and would
-// make the lake's release cadence the daemon's problem.
+// The wire type is garm.ledger.v1.Event, from github.com/garm-ai/contracts.
+// That module is the ONLY thing this repository and garmd share: garmd
+// publishes, this drains, and neither imports the other. A Go import between
+// them would put DuckDB and an S3 client in a request path's dependency graph,
+// and would make the lake's release cadence the daemon's problem.
 //
 // The two streams are framed differently and that is a property of the
 // streams, not something to sniff per message. The ledger carries
@@ -22,8 +22,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	ledgerv1 "github.com/garm-ai/garm/contracts/garm/ledger/v1"
-	"github.com/garm-ai/garm/contracts/ledger"
+	ledgerv1 "github.com/garm-ai/contracts/garm/ledger/v1"
+	"github.com/garm-ai/contracts/ledger"
 )
 
 // Envelope is how one stream's messages are framed.

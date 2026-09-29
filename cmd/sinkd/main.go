@@ -14,7 +14,7 @@
 //
 // It also has no Go dependency on garmd, in either direction, and CI asserts
 // it. garmd publishes to a stream; this consumes it. The contract between them
-// is the wire format in github.com/garm-ai/garm and the subject names in its
+// is the wire format in github.com/garm-ai/contracts and the subject names in its
 // wire package — never an import. An import edge would make the daemon's build
 // carry a Parquet writer, and would make this repository's release cadence the
 // daemon's problem.

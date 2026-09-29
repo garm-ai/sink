@@ -12,7 +12,9 @@ the records something is obliged to keep.
 
 The daemon publishes to a stream. This drains it. The only thing they share is
 the wire format — `garm.ledger.v1.Event` — and the subject names, both in
-[`garm-ai/garm`](https://github.com/garm-ai/garm).
+[`garm-ai/contracts`](https://github.com/garm-ai/contracts). That module is the
+whole of this repository's garm-ai dependency: the contract, not the command
+line tool that used to carry it.
 
 That is deliberate and CI asserts it. This binary links DuckDB, which is cgo
 and tens of megabytes of static library, and an S3 client. Neither has any
@@ -65,6 +67,17 @@ sinkd tail audit         print GARM_AUDIT rows as JSON lines, without consuming
 The binary was `garm-sink` before v0.3.0; the module path is unchanged, so
 `go install github.com/garm-ai/sink/cmd/sinkd@v0.3.0` is the new spelling and
 tags up to v0.2.0 keep `cmd/garm-sink`.
+
+### The contract has a field the lake does not
+
+`garm.ledger.v1.Event` grew `execution_subject` (field 71) — the `exec.sub` of
+the caller's token, the runner that made a call on someone else's behalf. The
+Parquet schema does not carry it. `row.Columns` is an explicit list, not a walk
+over the descriptor, so a field added to the contract does not become a column
+until someone adds it here; adding one is a change to the shape of a lake that
+already has files in it, and that is a decision, not a consequence. Until it is
+taken, "which of these rows did an agent runner produce" is a question the
+stream can answer and the lake cannot.
 
 `provision` never patches. A stream that exists with a different policy is
 reported and the command exits non-zero — an audit stream running `DiscardOld`

@@ -16,7 +16,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/spf13/cobra"
 
-	"github.com/garm-ai/garm/contracts/wire"
+	"github.com/garm-ai/contracts/wire"
 	"github.com/garm-ai/sink/internal/cli"
 	"github.com/garm-ai/sink/internal/drain"
 	"github.com/garm-ai/sink/internal/lake"
