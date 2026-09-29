@@ -1,4 +1,4 @@
-// Command garm-sink drains the garm record streams into a queryable lake.
+// Command sinkd drains the garm record streams into a queryable lake.
 //
 // NATS JetStream in, micro-batched ZSTD Parquet on an S3-compatible store out,
 // hive-partitioned so that DuckDB — and later Iceberg or DuckLake — reads it
@@ -32,16 +32,16 @@ import (
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "garm-sink:", err)
+		fmt.Fprintln(os.Stderr, "sinkd:", err)
 		os.Exit(1)
 	}
 }
 
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "garm-sink",
+		Use:   "sinkd",
 		Short: "Drain the garm record streams into a Parquet lake",
-		Long: "garm-sink consumes the garm ledger and audit streams from NATS\n" +
+		Long: "sinkd consumes the garm ledger and audit streams from NATS\n" +
 			"JetStream and lands them as hive-partitioned ZSTD Parquet on an\n" +
 			"S3-compatible store.\n\n" +
 			"Delivery is at-least-once, so the lake holds duplicate rows by\n" +

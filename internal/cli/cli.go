@@ -18,7 +18,7 @@ import (
 // have.
 //
 // Cobra's default is to print help and exit 0. That turns a container
-// entrypoint templated as `garm-sink drain $STREAM` into a pod that starts,
+// entrypoint templated as `sinkd drain $STREAM` into a pod that starts,
 // reports healthy, and forwards nothing the day $STREAM is unset — a job that
 // looks alive while the lake stops filling.
 func RequireSubcommand(cmd *cobra.Command) *cobra.Command {

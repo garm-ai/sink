@@ -207,7 +207,7 @@ func TestWritingNoRowsWritesNothingRatherThanAnEmptyFile(t *testing.T) {
 }
 
 // The lake's schema is row.Columns plus the derived partition column, in
-// that order. `garm-sink tail` prints row.Columns, so this is the test that
+// that order. `sinkd tail` prints row.Columns, so this is the test that
 // a line on a terminal and a row in the lake are one schema.
 func TestTheParquetSchemaIsTheRowsColumnsPlusDate(t *testing.T) {
 	got := lake.Columns()

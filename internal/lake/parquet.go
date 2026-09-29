@@ -30,7 +30,7 @@ import (
 // appeared in the app column and the lake would have looked fine.
 //
 // The names and accessors are row.Columns rather than a second list here, so
-// that what `garm-sink tail` prints and what the lake stores are one schema
+// that what `sinkd tail` prints and what the lake stores are one schema
 // by construction. Only the types are this package's to know.
 type column struct {
 	name string
@@ -59,7 +59,7 @@ var columns = parquetColumns()
 
 // parquetColumns pairs every row column with its type and appends the
 // partition column. A row column with no type here is a programming error
-// caught by any test run — and by the first `garm-sink` invocation — rather
+// caught by any test run — and by the first `sinkd` invocation — rather
 // than a column that quietly never reaches the lake.
 func parquetColumns() []column {
 	out := make([]column, 0, len(row.Columns)+1)

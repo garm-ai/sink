@@ -1,4 +1,4 @@
-# garm-sink
+# sink
 
 **The record streams, drained into a lake.** NATS JetStream in; micro-batched
 ZSTD Parquet on an S3-compatible object store out, hive-partitioned so DuckDB —
@@ -51,12 +51,16 @@ of events; one bad event in it yields 499 rows and one dead letter.
 ## Commands
 
 ```
-garm-sink provision          create or verify the three streams
-garm-sink drain ledger       drain GARM_LEDGER  (messages are garm.ledger.v1.Batch)
-garm-sink drain audit        drain GARM_AUDIT   (messages are garm.ledger.v1.Event)
-garm-sink tail ledger        print GARM_LEDGER rows as JSON lines, without consuming
-garm-sink tail audit         print GARM_AUDIT rows as JSON lines, without consuming
+sinkd provision          create or verify the three streams
+sinkd drain ledger       drain GARM_LEDGER  (messages are garm.ledger.v1.Batch)
+sinkd drain audit        drain GARM_AUDIT   (messages are garm.ledger.v1.Event)
+sinkd tail ledger        print GARM_LEDGER rows as JSON lines, without consuming
+sinkd tail audit         print GARM_AUDIT rows as JSON lines, without consuming
 ```
+
+The binary was `garm-sink` before v0.3.0; the module path is unchanged, so
+`go install github.com/garm-ai/sink/cmd/sinkd@v0.3.0` is the new spelling and
+tags up to v0.2.0 keep `cmd/garm-sink`.
 
 `provision` never patches. A stream that exists with a different policy is
 reported and the command exits non-zero — an audit stream running `DiscardOld`
@@ -70,10 +74,10 @@ two instances can write the same key.
 ## Watching a stream
 
 ```
-garm-sink tail ledger                                  the last 100 messages, then exit
-garm-sink tail ledger --since 20 --filter outcome=denied
-garm-sink tail ledger --since 10m --follow             from ten minutes ago, and keep going
-garm-sink tail audit --from-start --pretty --no-detail
+sinkd tail ledger                                  the last 100 messages, then exit
+sinkd tail ledger --since 20 --filter outcome=denied
+sinkd tail ledger --since 10m --follow             from ten minutes ago, and keep going
+sinkd tail audit --from-start --pretty --no-detail
 ```
 
 `tail` is the debugging eye: one JSON object per event, keys named and

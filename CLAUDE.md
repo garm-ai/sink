@@ -1,7 +1,7 @@
-# garm-sink — the record streams, drained into a lake
+# sink — the record streams, drained into a lake
 
 JetStream → micro-batch → ZSTD Parquet → S3-compatible object store. One
-binary, `garm-sink`, with three verbs: `provision`, `drain ledger`,
+binary, `sinkd`, with three verbs: `provision`, `drain ledger`,
 `drain audit` — and a fourth that only reads: `tail ledger`, `tail audit`.
 
 ## The invariant
@@ -19,7 +19,7 @@ folding this into the sidecar took it from 22.5 MB to 66.8 MB.
 ## Layout
 
 ```
-cmd/garm-sink/          the binary: provision, drain ledger|audit, tail ledger|audit
+cmd/sinkd/              the binary: provision, drain ledger|audit, tail ledger|audit
 internal/
   row/                  wire message -> Parquet rows, and what cannot become one;
                         row.Columns is THE column list, shared by lake and tail

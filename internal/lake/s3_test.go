@@ -256,7 +256,7 @@ func TestTheParquetSinkWritesTheBatchAndUploadsEveryPartition(t *testing.T) {
 	}
 	// The temp directory is removed even on the happy path: these are tens of
 	// megabytes each, every few minutes, forever.
-	if entries, _ := filepath.Glob(filepath.Join(os.TempDir(), "garm-sink-*")); len(entries) > 0 {
+	if entries, _ := filepath.Glob(filepath.Join(os.TempDir(), "sinkd-*")); len(entries) > 0 {
 		t.Errorf("the sink left scratch directories behind: %v", entries)
 	}
 }

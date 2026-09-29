@@ -14,14 +14,14 @@
   queue with no leader election.
 - `internal/streams` — the two streams' configurations and `provision`, which
   creates what is missing and refuses what exists with the wrong policy.
-- `internal/tail` — `garm-sink tail ledger|audit`: an ephemeral `AckNone`
+- `internal/tail` — `sinkd tail ledger|audit`: an ephemeral `AckNone`
   consumer, deleted on exit, printing one JSON object per event under the
   lake's column names (`row.Columns`, the one list the Parquet writer also
   builds from). `--since` (count or duration), `--from-start`, `--follow`,
   repeatable client-side `--filter column=value`, `--pretty`, `--no-detail`.
   Tested against the embedded broker, including that a half-acked durable on
   the same stream does not move.
-- `cmd/garm-sink` — `provision`, `drain ledger`, `drain audit`, `tail ledger`,
+- `cmd/sinkd` — `provision`, `drain ledger`, `drain audit`, `tail ledger`,
   `tail audit`.
 
 ## Not covered by tests, and why
@@ -94,10 +94,10 @@ internal/drain      92%
 internal/row        90%
 internal/lake       85%
 internal/tail       84%
-cmd/garm-sink       48%
+cmd/sinkd           48%
 ```
 
-`cmd/garm-sink` is flag wiring around a NATS connection and a signal handler:
+`cmd/sinkd` is flag wiring around a NATS connection and a signal handler:
 the flag surface, `ackWait` and the tail flag set are tested, `runDrain` and
 `runTail` themselves are not, and what is worth testing in them is tested
 where it lives. `internal/tail`'s remainder is the `--since <duration>` start

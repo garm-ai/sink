@@ -12,7 +12,7 @@ import (
 )
 
 // A parent that prints help and exits 0 is a green deploy that moved no data.
-// This binary runs unattended; `garm-sink drain $STREAM` with the variable
+// This binary runs unattended; `sinkd drain $STREAM` with the variable
 // unset has to fail loudly.
 func TestEveryParentCommandRefusesInsteadOfPrintingHelp(t *testing.T) {
 	for _, path := range [][]string{nil, {"drain"}, {"tail"}} {

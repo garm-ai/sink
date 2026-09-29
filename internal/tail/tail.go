@@ -152,7 +152,7 @@ func ConsumerConfig(o Options, state jetstream.StreamState) jetstream.ConsumerCo
 		// The broker deletes it this long after the last fetch. Run deletes
 		// it on exit too; this is for the exit that never runs.
 		InactiveThreshold: 30 * time.Second,
-		Description:       "garm-sink tail: ephemeral, acks nothing",
+		Description:       "sinkd tail: ephemeral, acks nothing",
 	}
 	switch {
 	case o.Start.FromStart:
@@ -231,7 +231,7 @@ func Run(ctx context.Context, js jetstream.JetStream, o Options, out, errOut io.
 	if created.Config.AckPolicy != jetstream.AckNonePolicy {
 		ack = created.Config.AckPolicy.String()
 	}
-	fmt.Fprintf(errOut, "garm-sink tail: stream=%s consumer=%s durable=%t ack=%s pending=%d follow=%t\n",
+	fmt.Fprintf(errOut, "sinkd tail: stream=%s consumer=%s durable=%t ack=%s pending=%d follow=%t\n",
 		o.Stream, created.Name, created.Config.Durable != "", ack, created.NumPending, o.Follow)
 
 	if !o.Follow && created.NumPending == 0 {
@@ -259,7 +259,7 @@ func Run(ctx context.Context, js jetstream.JetStream, o Options, out, errOut io.
 		}
 		rows, bad := row.Decode(o.Envelope, msg.Data())
 		for _, r := range bad {
-			fmt.Fprintf(errOut, "garm-sink tail: %s seq %d: unreadable: %s\n", msg.Subject(), seq, r)
+			fmt.Fprintf(errOut, "sinkd tail: %s seq %d: unreadable: %s\n", msg.Subject(), seq, r)
 		}
 		for _, r := range rows {
 			if !matches(r, o.Filter) {

@@ -97,7 +97,7 @@ func (s *ParquetSink) Flush(ctx context.Context, b drain.Batch) error {
 	if len(b.Rows) == 0 {
 		return nil
 	}
-	dir, err := os.MkdirTemp("", "garm-sink-*")
+	dir, err := os.MkdirTemp("", "sinkd-*")
 	if err != nil {
 		return err
 	}

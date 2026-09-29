@@ -147,7 +147,7 @@ func runDrain(ctx context.Context, o drainOpts) error {
 		return err
 	}
 
-	logger.Info("garm-sink drain started",
+	logger.Info("sinkd drain started",
 		"nats", o.natsURL, "stream", o.stream, "durable", o.durable,
 		"s3", o.s3Endpoint, "bucket", o.s3Bucket, "instance", o.instance,
 		"batch_max_rows", o.cfg.BatchMaxRows, "batch_interval", o.cfg.BatchInterval.String(),
@@ -164,7 +164,7 @@ func runDrain(ctx context.Context, o drainOpts) error {
 	if err := d.Run(ctx); err != nil {
 		return err
 	}
-	logger.Info("garm-sink drain stopped")
+	logger.Info("sinkd drain stopped")
 	return nil
 }
 

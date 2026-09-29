@@ -41,7 +41,7 @@ func TestRequireSubcommandRefusesAndNamesTheOptions(t *testing.T) {
 
 // A hidden command is not an answer to "which subcommand did you mean".
 func TestRequireSubcommandDoesNotAdvertiseHiddenCommands(t *testing.T) {
-	parent := &cobra.Command{Use: "garm-sink"}
+	parent := &cobra.Command{Use: "sinkd"}
 	parent.AddCommand(runnable("drain"))
 	hidden := runnable("secret")
 	hidden.Hidden = true

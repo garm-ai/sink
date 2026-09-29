@@ -1,4 +1,4 @@
-# Toolchain and tasks for garm-sink. `mise install` gets you a working
+# Toolchain and tasks for sink. `mise install` gets you a working
 # checkout; `mise run ci` is exactly what CI runs.
 #
 # Task names match the other garm-ai repositories on purpose: `mise run test`

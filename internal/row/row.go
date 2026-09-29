@@ -334,7 +334,7 @@ type Column struct {
 // Columns is the schema, in order — the ONE list of what a row is called
 // when it leaves this process.
 //
-// The Parquet writer builds its DDL from it and `garm-sink tail` prints keys
+// The Parquet writer builds its DDL from it and `sinkd tail` prints keys
 // from it, so a column added here is added to both, and a name can never be
 // spelled one way in the lake and another way on a terminal. The partition
 // column `date` is not here: the writer derives it from `time`, and a
