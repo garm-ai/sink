@@ -37,6 +37,7 @@ func event(id string, when time.Time) *ledgerv1.Event {
 		RedactionPlan:         "sha256:planhash",
 		RedactionCount:        3,
 		ErrorDetail:           "user with email ada@corp.com not found",
+		ExecutionSubject:      "runner:nightly-recon",
 	}
 }
 
@@ -81,6 +82,7 @@ func TestAnEventBecomesEveryColumnItCarries(t *testing.T) {
 		{"RedactionPlan", r.RedactionPlan, "sha256:planhash"},
 		{"RedactionCount", r.RedactionCount, int32(3)},
 		{"ErrorDetail", r.ErrorDetail, "user with email ada@corp.com not found"},
+		{"ExecutionSubject", r.ExecutionSubject, "runner:nightly-recon"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %v, want %v", c.field, c.got, c.want)
@@ -97,6 +99,23 @@ func TestPrincipalKindReachesTheRow(t *testing.T) {
 	rows, _ := row.Decode(row.EnvelopeEvent, marshal(t, ev))
 	if len(rows) != 1 || rows[0].PrincipalKind != "PRINCIPAL_KIND_SERVICE" {
 		t.Fatalf("principal_kind did not reach the row: %+v", rows)
+	}
+}
+
+// execution_subject carries the runner that made the call for someone else,
+// and is empty when there was none. Both halves are asserted: a column that is
+// always filled distinguishes nothing, so "" is a value here — "a direct call"
+// — and not an absence.
+func TestExecutionSubjectCarriesTheRunnerAndIsEmptyForADirectCall(t *testing.T) {
+	ev := event("ev-exec", time.Now().UTC().Truncate(time.Second))
+	rows, _ := row.Decode(row.EnvelopeEvent, marshal(t, ev))
+	if len(rows) != 1 || rows[0].ExecutionSubject != "runner:nightly-recon" {
+		t.Fatalf("execution_subject did not reach the row: %+v", rows)
+	}
+	ev.ExecutionSubject = ""
+	rows, _ = row.Decode(row.EnvelopeEvent, marshal(t, ev))
+	if len(rows) != 1 || rows[0].ExecutionSubject != "" {
+		t.Fatalf("a direct call did not produce an empty execution_subject: %+v", rows)
 	}
 }
 

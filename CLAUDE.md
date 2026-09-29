@@ -19,7 +19,9 @@ out and flattened to the new module's root at contracts v0.2.0, so
 `garm/contracts/wire` is `contracts/wire` and `garm/contracts/garm/ledger/v1` is
 `contracts/garm/ledger/v1`. Between the old pin here (garm v0.8.0) and the new
 module the ledger changed in exactly one way: `execution_subject`, field 71,
-added at garm v0.14.0. It is not a Parquet column — see KNOWN-GAPS.md.
+added at garm v0.14.0. It became a Parquet column at v0.7.0 — see README,
+"`execution_subject`, NULL and empty", for what `NULL` means either side of
+that boundary.
 
 It matters because of what is linked here: DuckDB, which is cgo, and minio.
 Neither belongs in a request path's dependency graph. Measured in the monorepo,
@@ -31,7 +33,8 @@ folding this into the sidecar took it from 22.5 MB to 66.8 MB.
 cmd/sinkd/              the binary: provision, drain ledger|audit, tail ledger|audit
 internal/
   row/                  wire message -> Parquet rows, and what cannot become one;
-                        row.Columns is THE column list, shared by lake and tail
+                        row.Columns is THE column list, shared by lake and tail;
+                        contract_test.go fails when the descriptor outgrows it
   drain/                the consume loop and the ack discipline; dead letters
   tail/                 the debugging eye: ephemeral AckNone consumer -> JSON lines
   lake/                 DuckDB writes the Parquet; a Destination lands it —
@@ -43,7 +46,7 @@ internal/
 **Everything starts `internal/`.** Promoting a package later is easy where
 demoting one is breaking.
 
-## The seven things that are easy to get wrong
+## The eight things that are easy to get wrong
 
 **1. The batch limit counts rows, not messages.** One ledger message is a
 `garm.ledger.v1.Batch` holding hundreds of events. A limit of 1000 messages is
@@ -89,6 +92,23 @@ spelling turns a correctly configured machine into `Access Denied` from the
 store — which names neither a credential nor a variable. For the same reason
 there is no silent fallback to unsigned requests: a store with no IAM is
 `--s3-anonymous`, and the startup line says which of the two is in use.
+
+**8. A field added to the contract does not become a column by itself, and a
+test is the only thing that says so.** `row.Columns` is an explicit list rather
+than a walk over the descriptor, deliberately: the lake's names, order and
+types are ours, not the proto's. The cost was that nothing failed when the
+contract grew a field with no entry in the list — `execution_subject` was on
+the wire, set by garmd, for nine releases before anyone noticed.
+`internal/row/contract_test.go` closes that class: it walks
+`garm.ledger.v1.Event`, `Usage` and `Batch` and requires every field to be a
+column or on a named ignore list **with a reason beside it**, in both
+directions, so a column with no field behind it fails as well. If it fails on a
+field you meant to leave out, write the reason into the ignore list — an entry
+without one cannot be told from an oversight. `Event`'s ignore list is empty
+today, and `error_detail` is the field that was considered for it and kept as a
+column: destroying the detail is what the contract warns against, and what it
+actually asks for is a governance grade this repository does not yet provide
+(KNOWN-GAPS).
 
 ## Testing
 

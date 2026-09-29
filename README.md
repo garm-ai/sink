@@ -34,13 +34,95 @@ for. So the sink never acks before the rows are durable, and the reader
 deduplicates:
 
 ```sql
-SELECT * FROM read_parquet('s3://garm-lake/ledger/**/*.parquet', hive_partitioning=true)
+SELECT * FROM read_parquet('s3://garm-lake/ledger/**/*.parquet',
+                           hive_partitioning=true, union_by_name=true)
 QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY time) = 1;
 ```
+
+`union_by_name=true` is there because the lake gained a column at v0.7.0 and a
+`SELECT *` spanning that boundary needs it — see
+[`execution_subject`, NULL and empty](#execution_subject-null-and-empty).
 
 `event_id` is assigned when an event is created, never at publish time, so a
 retried batch carries the same ids it carried the first time. Every row in the
 lake has one; a record without one never becomes a row.
+
+## `execution_subject`, NULL and empty
+
+Since **v0.7.0** the lake carries `execution_subject`: the `exec.sub` of the
+caller's token — the runner that executed a call on someone else's behalf.
+`garm.ledger.v1.Event` grew it as field 71 at garm v0.14.0 and garmd's tool
+plane has set it ever since; the lake dropped it until v0.7.0, so "which of
+these rows did an agent runner produce, and for whom" was a question the stream
+could answer and the lake could not. Beside `principal_subject`,
+`principal_actor` and `chain_depth`, it is what an auditor asks for by name.
+
+It is an additive column, appended last, so every column already in the lake
+keeps its ordinal. **Parts written before v0.7.0 have no such column and read
+back `NULL`.**
+
+**`NULL` and `''` are different answers and must not be collapsed.**
+
+| value | what it means |
+| --- | --- |
+| a subject | that runner executed this call for the principal |
+| `''` | **a direct call — there was no runner.** garmd writes the empty string deliberately: a column that is always filled distinguishes nothing |
+| `NULL` | **not recorded** — the part predates v0.7.0. The stream knew; the file does not |
+
+Coalescing `NULL` to `''` would assert "no runner was involved" about rows
+where the sink never wrote the answer down. For an audit record that is worse
+than a gap: it is a fabricated negative, the one shape of answer nobody may
+hand an auditor. So:
+
+```sql
+-- produced by a runner
+WHERE execution_subject IS NOT NULL AND execution_subject <> ''
+-- known to be a direct call
+WHERE execution_subject = ''
+-- written before the lake carried the column
+WHERE execution_subject IS NULL
+```
+
+### Reading across the boundary
+
+DuckDB does **not** union by name by default. A query that projects
+`execution_subject` — or `*` — over parts from both sides of v0.7.0 fails, and
+the failure names its own fix:
+
+```
+schema mismatch in glob: column "execution_subject" ... could not be found in file ...
+If you are trying to read files with different schemas, try setting union_by_name=True
+```
+
+So pass it, as the queries above do. Two things make this survivable. It is
+never a wrong answer — DuckDB refuses rather than inventing a column — and it
+reaches only queries that actually open the new column. A query over columns
+that existed before v0.7.0 reads both sides unchanged, because projection
+pushdown never touches the column that differs; every narrow query written
+against this lake before v0.7.0 goes on working untouched.
+
+Measured on 75 rows spanning a pre-v0.7.0 lake and a post-v0.7.0 one under a
+single glob: 67 `NULL` from the old parts, 8 `''` from the new.
+
+## The lake keeps up with the contract, and a test says so
+
+`row.Columns` is an explicit list, not a walk over the descriptor: the lake's
+column names, order and types are this repository's decisions and not the
+proto's. The cost used to be that nothing failed when the contract grew a field
+the list had no entry for, which is how `execution_subject` went nine releases
+unnoticed.
+
+`internal/row/contract_test.go` walks `garm.ledger.v1.Event`'s descriptor and
+requires every field to be either a lake column or on a named ignore list **with
+a reason beside it** — so that "deliberately not in the lake" can be told from
+"nobody noticed". It runs in both directions, so a column with no contract field
+behind it fails too, which is how a rename would surface. `Usage` gets the same
+walk, because it is flattened into four columns rather than written as a STRUCT;
+`Batch` gets it too, where the whole message is the envelope and a field added
+to it would be read by nobody.
+
+Adding a column to a lake that already has files in it is still a decision
+rather than a consequence. What the test removes is the option of not making it.
 
 ## What cannot be read is not discarded
 
@@ -67,17 +149,6 @@ sinkd tail audit         print GARM_AUDIT rows as JSON lines, without consuming
 The binary was `garm-sink` before v0.3.0; the module path is unchanged, so
 `go install github.com/garm-ai/sink/cmd/sinkd@v0.3.0` is the new spelling and
 tags up to v0.2.0 keep `cmd/garm-sink`.
-
-### The contract has a field the lake does not
-
-`garm.ledger.v1.Event` grew `execution_subject` (field 71) — the `exec.sub` of
-the caller's token, the runner that made a call on someone else's behalf. The
-Parquet schema does not carry it. `row.Columns` is an explicit list, not a walk
-over the descriptor, so a field added to the contract does not become a column
-until someone adds it here; adding one is a change to the shape of a lake that
-already has files in it, and that is a decision, not a consequence. Until it is
-taken, "which of these rows did an agent runner produce" is a question the
-stream can answer and the lake cannot.
 
 `provision` never patches. A stream that exists with a different policy is
 reported and the command exits non-zero — an audit stream running `DiscardOld`
@@ -137,7 +208,8 @@ sinkd drain ledger --lake-dir ./lake
 Query it where it lies:
 
 ```sql
-SELECT * FROM read_parquet('./lake/ledger/**/*.parquet', hive_partitioning=true)
+SELECT * FROM read_parquet('./lake/ledger/**/*.parquet',
+                           hive_partitioning=true, union_by_name=true)
 QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY time) = 1;
 ```
 

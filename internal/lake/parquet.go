@@ -52,7 +52,7 @@ var types = map[string]string{
 	"principal_actor": "VARCHAR", "principal_kind": "VARCHAR", "chain_depth": "INTEGER",
 	"clearance_effective": "VARCHAR", "compartments_effective": "VARCHAR",
 	"redaction_plan": "VARCHAR", "redaction_count": "INTEGER", "disclosed_count": "INTEGER",
-	"error_detail": "VARCHAR",
+	"error_detail": "VARCHAR", "execution_subject": "VARCHAR",
 }
 
 var columns = parquetColumns()

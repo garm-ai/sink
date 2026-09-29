@@ -108,6 +108,20 @@ type Row struct {
 	// sensitive field in the registry that produced it, and a lake that
 	// treats this column like the others has undone the redaction.
 	ErrorDetail string
+
+	// ExecutionSubject is the `exec.sub` of the caller's token: the runner
+	// that executed this call for someone else, EMPTY when there was none.
+	//
+	// The empty case is what makes the column worth having — a column that is
+	// always filled distinguishes nothing. Beside principal_subject,
+	// principal_actor and chain_depth it answers the question an auditor
+	// actually asks: which machine identity acted, on whose behalf.
+	//
+	// It arrived in the contract at garm v0.14.0 as field 71 and became a
+	// column here at v0.7.0, so parts written before that have no such column
+	// and read back NULL. NULL and "" are deliberately NOT the same thing —
+	// see README, "execution_subject, NULL and empty".
+	ExecutionSubject string
 }
 
 // Reason is why one message, or one event inside one, could not become a row.
@@ -291,7 +305,8 @@ func FromProto(p *ledgerv1.Event) (Row, error) {
 		RedactionCount:            int32(ev.RedactionCount),
 		DisclosedCount:            int32(ev.DisclosedCount),
 
-		ErrorDetail: ev.ErrorDetail,
+		ErrorDetail:      ev.ErrorDetail,
+		ExecutionSubject: ev.ExecutionSubject,
 	}, nil
 }
 
@@ -379,6 +394,13 @@ var Columns = []Column{
 	{"redaction_count", func(r Row) any { return r.RedactionCount }},
 	{"disclosed_count", func(r Row) any { return r.DisclosedCount }},
 	{"error_detail", func(r Row) any { return r.ErrorDetail }},
+	// execution_subject is appended rather than filed next to
+	// principal_subject, where it reads better, because appending is what
+	// makes it additive: every column already in the lake keeps its ordinal,
+	// and a part written before v0.7.0 differs from one written after by a
+	// trailing column and nothing else. It is also the contract's own order —
+	// field 71, after error_detail's 70.
+	{"execution_subject", func(r Row) any { return r.ExecutionSubject }},
 }
 
 // ColumnNamed finds a column by its lake name.

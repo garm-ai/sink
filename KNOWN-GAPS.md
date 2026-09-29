@@ -5,26 +5,21 @@ surprise you — most of it about the lake, which outlives every release that
 wrote into it. Not an inventory of what works: the code says that, and a file
 that repeats it goes stale in a way the code cannot.
 
-## The contract has a field the lake does not
+## What the contract-drift test does not cover
 
-**`execution_subject` is on the wire and is not a column.** `garm.ledger.v1.Event`
-field 71 — the `exec.sub` of the caller's token, the runner that made a call on
-someone else's behalf — was added at garm v0.14.0 and is set by garmd's
-toolplane today. `row.Columns` is an explicit list rather than a walk over the
-descriptor, so the field decodes and is then dropped. Nothing is corrupted and
-no existing column moved; the cost is that "which of these rows did an agent
-runner produce, and for whom" is a question the stream can answer and the lake
-cannot. Adding the column changes the shape of a lake that already has files in
-it — older parts would read back `NULL` where newer ones carry a subject — so it
-is deliberately a decision rather than a consequence of a dependency bump.
-
-**A field added to the contract is silent here in general.** The mapping goes
-through the contract's own `ledger.FromProto`, which is why there is one place
-to forget a field rather than two, but neither the compiler nor any test fails
-when the descriptor grows something `row.Columns` has no entry for. A test that
-asserted every field of `garm.ledger.v1.Event` is either a column or an explicit
-exclusion would turn this from a discovery into a build failure, and is not
-written.
+`internal/row/contract_test.go` walks `garm.ledger.v1.Event`, `Usage` and
+`Batch` and fails when a field is neither a lake column nor on a named ignore
+list with a reason beside it — the check `execution_subject` needed and did not
+have for the nine releases it sat on the wire unread. It checks NAMES, in both
+directions, and nothing else. A field whose type or cardinality changed under
+the same name passes: the DuckDB type map in `internal/lake` is a separate
+list, and a `string` that became `repeated string` would flatten differently
+and still be spelled the same. Field numbers are unchecked except
+`execution_subject`'s, pinned at 71 because reusing 70 is the mistake the
+contract's own comment exists to prevent. And it proves a column EXISTS, not
+that a value reaches it — the plumbing runs through the contract's shared
+`ledger.FromProto`, so there is one place to get it right rather than two, but
+no test here reads that place.
 
 ## What the tests do not reach
 
