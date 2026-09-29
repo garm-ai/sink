@@ -29,7 +29,8 @@ const IncompleteSuffix = ".incomplete"
 // bucket later and read by exactly the queries that were written against it.
 //
 // It takes no credentials, because there is nothing to authenticate to: the
-// S3_ACCESS_KEY and S3_SECRET_KEY reading belongs to the S3 destination alone.
+// AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY reading belongs to the S3
+// destination alone.
 type DirStore struct {
 	root string
 }

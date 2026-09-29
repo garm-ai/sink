@@ -10,7 +10,9 @@
   redelivery, dead-letter then terminate, and a shutdown flush on a context
   derived with `WithoutCancel`.
 - `internal/lake` — DuckDB writes hive-partitioned ZSTD Parquet and a
-  `Destination` lands it: minio puts the tree on an S3-compatible store, or
+  `Destination` lands it: minio puts the tree on an S3-compatible store —
+  configured by the AWS-standard variable names, and refusing a configuration
+  it cannot sign rather than sending unsigned requests — or
   `DirStore` renames it into a directory on this machine (`--lake-dir`). Both
   build their keys from one walk, so the path on disk and the object key are
   the same string by construction. Instance-unique names, so any number of
@@ -37,6 +39,13 @@ uploads (nothing here triggers one: `FPutObject` on a file under the threshold
 is a single PUT), minio's retry behaviour, or the quirks of any particular
 store. Those need a real MinIO or SeaweedFS, which belongs in a compose-based
 integration job rather than in `go test`.
+
+What that server does cover, since v0.5.0, is the configuration reaching the
+wire: SigV4 puts the access key and the region in the credential scope of the
+`Authorization` header, so the test asserts what the store was sent rather than
+what the struct was filled with. It was the absence of exactly that assertion
+that let `S3_ACCESS_KEY` go on being the one spelling nothing else on the
+machine used.
 
 **No end-to-end run from a NATS message to an OBJECT.** The local destination
 now has one — a message on the embedded broker, through the drain, into a
@@ -106,6 +115,17 @@ column; there is no allow-list of columns, no per-tenant view and no audit of
 who tailed what. It is a debugging eye for someone already entitled to read
 the stream, and nothing here checks that they are — NATS credentials do.
 
+**Only the environment variables, not the whole AWS credential chain.** The S3
+side reads `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+`AWS_REGION`/`AWS_DEFAULT_REGION` and `AWS_ENDPOINT_URL`. It does not read
+`~/.aws/credentials`, `AWS_PROFILE`, a web-identity token file, or the instance
+metadata service, so a drain running under an EC2 or EKS role with no variables
+exported is refused rather than picking the role up. minio-go ships the chain
+(`credentials.NewChainCredentials`) and wiring it in is small; what it costs is
+that "no credentials" stops being a decidable state at startup, which is the
+property this release was about. It is a deliberate order of work, not an
+oversight: variables first, because that is what the platform sets.
+
 **No metrics.** Rows per flush, flush latency, dead letters by reason and
 consumer lag are all things an operator will want, and all of them are
 currently a log line at best.
@@ -135,9 +155,9 @@ internal/cli       100%
 internal/streams    94%
 internal/drain      92%
 internal/row        90%
-internal/lake       84%
+internal/lake       87%
 internal/tail       84%
-cmd/sinkd           51%
+cmd/sinkd           55%
 ```
 
 `cmd/sinkd` is flag wiring around a NATS connection and a signal handler:

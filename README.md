@@ -75,6 +75,42 @@ Any number of drains can run against one stream: they share a durable consumer,
 and object names carry `<hostname>-<pid>` plus the stream-sequence range, so no
 two instances can write the same key.
 
+## On an object store
+
+The S3 side reads the **AWS-standard variables** — the ones the AWS CLI, every
+SDK, DuckDB's `httpfs` and the rest of this platform already read:
+
+| variable | what it does |
+| --- | --- |
+| `AWS_ACCESS_KEY_ID` | the access key; required unless `--s3-anonymous` |
+| `AWS_SECRET_ACCESS_KEY` | the secret key |
+| `AWS_SESSION_TOKEN` | the session token, for temporary credentials; empty for a long-lived key |
+| `AWS_REGION`, `AWS_DEFAULT_REGION` | the region, `AWS_REGION` first, as the SDKs resolve it |
+| `AWS_ENDPOINT_URL` | the default for `--s3-endpoint`; a URL or a bare `host:port` |
+| `S3_BUCKET` | the default for `--s3-bucket`. **This one is ours**: AWS addresses a bucket in the URL and defines no variable for it |
+
+```
+export AWS_ACCESS_KEY_ID=garmdev AWS_SECRET_ACCESS_KEY=garmdevsecret AWS_DEFAULT_REGION=us-east-1
+sinkd drain ledger --s3-endpoint 127.0.0.1:28333 --s3-bucket garm-lake
+```
+
+**`S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_ENDPOINT` are not read any more.**
+They were what this binary read before v0.5.0, and being the one thing on a
+machine that wanted its own spelling cost an afternoon: with the AWS variables
+exported and correct, the drain built an anonymous client and the store
+answered `Access Denied`, which names neither a credential nor a variable. A
+run started with only the old names now stops at startup and says which one to
+export instead.
+
+A drain with no credentials at all is refused for the same reason. A store with
+no IAM configured is a real thing, and it is now a flag — `--s3-anonymous` —
+rather than what an unset variable decays into. The first log line says which
+of the two is in use:
+
+```
+"destination":"s3://garm-lake at 127.0.0.1:28333 (region us-east-1, signed with AWS_ACCESS_KEY_ID)"
+```
+
 ## A lake on disk
 
 The lake does not need an object store. `--lake-dir` writes the same objects to
@@ -107,9 +143,9 @@ than a corrupt part. Sweep them with:
 find ./lake -name '*.parquet.incomplete' -delete
 ```
 
-`--lake-dir` needs no credentials. `S3_ACCESS_KEY` and `S3_SECRET_KEY` are read
-on the S3 path and nowhere else, and the drain's first log line says which
-destination is in use.
+`--lake-dir` needs no credentials. `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` are read on the S3 path and nowhere else, and the
+drain's first log line says which destination is in use.
 
 What a directory does not give you is in [KNOWN-GAPS](KNOWN-GAPS.md): no
 lifecycle, no replication, and no compaction — that last one is true of both

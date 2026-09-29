@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -61,19 +62,83 @@ func newDrainCmd() *cobra.Command {
 }
 
 type drainOpts struct {
-	origin     string
-	stream     string
-	subject    string
-	envelope   row.Envelope
-	natsURL    string
-	durable    string
-	lakeDir    string
-	s3Endpoint string
-	s3Bucket   string
-	s3SSL      bool
-	keyPrefix  string
-	instance   string
-	cfg        drain.Config
+	origin      string
+	stream      string
+	subject     string
+	envelope    row.Envelope
+	natsURL     string
+	durable     string
+	lakeDir     string
+	s3Endpoint  string
+	s3Bucket    string
+	s3SSL       bool
+	s3Anonymous bool
+	keyPrefix   string
+	instance    string
+	cfg         drain.Config
+}
+
+// retiredEnv names the variables this command used to read and what replaced
+// them. They are gone rather than deprecated: the whole cost of the old names
+// was that a correctly configured machine looked like a broken store, and a
+// second spelling kept alive for one release keeps that ambiguity alive with
+// it. The repository is pre-1.0 and its consumers pin a tag, so the break
+// costs a line in a compose file rather than a migration.
+//
+// What is NOT gone is the diagnosis. A run started with only the old names set
+// is refused at startup by a message that names the variable to export, which
+// is the one thing the old failure never did.
+var retiredEnv = []struct{ old, replacement string }{
+	{"S3_ACCESS_KEY", lake.EnvAccessKey},
+	{"S3_SECRET_KEY", lake.EnvSecretKey},
+	{"S3_ENDPOINT", lake.EnvEndpoint},
+}
+
+// retiredEnvError refuses a machine configured the old way, naming the
+// variable that replaced each one. It is given the names that could have
+// changed the outcome of the call it guards, because a variable that would
+// have been ignored anyway is not worth refusing over: an explicit
+// --s3-endpoint settles the endpoint whatever S3_ENDPOINT says.
+//
+// It fires only when the old name is set and the new one is not, because that
+// is exactly the case where the old value was the operator's whole intent. A
+// machine with both set is already configured correctly for every other tool
+// on it, and a drain has no business refusing to start over a leftover it now
+// ignores.
+func retiredEnvError(names ...string) error {
+	var said []string
+	for _, r := range retiredEnv {
+		if !slices.Contains(names, r.old) {
+			continue
+		}
+		if os.Getenv(r.old) != "" && os.Getenv(r.replacement) == "" {
+			said = append(said, fmt.Sprintf("%s is no longer read: export %s instead", r.old, r.replacement))
+		}
+	}
+	if said == nil {
+		return nil
+	}
+	return errors.New(strings.Join(said, "; "))
+}
+
+// s3ConfigFromEnv reads the AWS-standard variables.
+//
+// AWS_REGION wins over AWS_DEFAULT_REGION because that is the precedence every
+// SDK and the CLI use, and a region that resolved differently here than in the
+// `aws s3 ls` someone ran to check the bucket would be its own afternoon.
+func s3ConfigFromEnv(o drainOpts) lake.S3Config {
+	return lake.S3Config{
+		Endpoint:  o.s3Endpoint,
+		Bucket:    o.s3Bucket,
+		AccessKey: os.Getenv(lake.EnvAccessKey),
+		SecretKey: os.Getenv(lake.EnvSecretKey),
+		// Empty for a long-lived key, and required by the store for a
+		// temporary one.
+		SessionToken: os.Getenv(lake.EnvSessionToken),
+		Region:       envOr(lake.EnvRegion, os.Getenv(lake.EnvDefaultRegion)),
+		UseSSL:       o.s3SSL,
+		Anonymous:    o.s3Anonymous,
+	}
 }
 
 // destinationOf turns the destination flags into one destination, or into the
@@ -87,14 +152,23 @@ type drainOpts struct {
 // names both.
 //
 // The credentials are read here and only on the S3 branch: a lake on disk has
-// nothing to authenticate to, and reading S3_ACCESS_KEY for it would make an
-// unset variable look relevant to a failure that has nothing to do with it.
+// nothing to authenticate to, and reading AWS_ACCESS_KEY_ID for it would make
+// an unset variable look relevant to a failure that has nothing to do with it.
+// The refusal over the retired names follows the same rule — but it also
+// covers the no-destination case, because a machine that set only S3_ENDPOINT
+// used to get a destination out of it and would otherwise now be told it named
+// no destination at all, which is true and useless.
 func destinationOf(o drainOpts) (lake.Destination, error) {
 	dir, s3 := o.lakeDir != "", o.s3Endpoint != "" || o.s3Bucket != ""
 	switch {
 	case dir && s3:
 		return nil, errors.New("--lake-dir and --s3-endpoint/--s3-bucket name two different destinations; pass one of them")
 	case !dir && !s3:
+		// Every retired name is worth naming here: with no flags at all, any
+		// of them was the operator's whole configuration.
+		if err := retiredEnvError("S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY"); err != nil {
+			return nil, err
+		}
 		return nil, errors.New("no destination: pass --lake-dir <path> for a lake on this machine, " +
 			"or --s3-endpoint and --s3-bucket for an object store")
 	case dir:
@@ -104,8 +178,10 @@ func destinationOf(o drainOpts) (lake.Destination, error) {
 	case o.s3Bucket == "":
 		return nil, errors.New("--s3-endpoint without --s3-bucket: there is no bucket to put the objects in")
 	}
-	return lake.NewUploader(o.s3Endpoint,
-		os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), o.s3SSL, o.s3Bucket)
+	if err := retiredEnvError("S3_ACCESS_KEY", "S3_SECRET_KEY"); err != nil {
+		return nil, err
+	}
+	return lake.NewUploader(s3ConfigFromEnv(o))
 }
 
 func newDrainStreamCmd(origin, stream, subject string, envelope row.Envelope, short string) *cobra.Command {
@@ -130,9 +206,17 @@ func newDrainStreamCmd(origin, stream, subject string, envelope row.Envelope, sh
 	// --lake-dir is the whole lake on this machine: the same Parquet under the
 	// same keys, as paths, for a developer with no object store.
 	f.StringVar(&o.lakeDir, "lake-dir", envOr("LAKE_DIR", ""), "write the lake to this directory instead of S3")
-	f.StringVar(&o.s3Endpoint, "s3-endpoint", envOr("S3_ENDPOINT", ""), "S3 endpoint host:port")
-	f.StringVar(&o.s3Bucket, "s3-bucket", envOr("S3_BUCKET", ""), "S3 bucket")
-	f.BoolVar(&o.s3SSL, "s3-ssl", false, "use TLS for S3")
+	// The S3 side reads the AWS-standard variables, so a machine already set
+	// up for the AWS CLI, an SDK or DuckDB's httpfs is already set up for
+	// this. The exception is the bucket: AWS addresses one in the URL and
+	// defines no variable for it, so S3_BUCKET is ours and the help says so.
+	f.StringVar(&o.s3Endpoint, "s3-endpoint", envOr(lake.EnvEndpoint, ""),
+		"S3 endpoint, host:port or URL (env "+lake.EnvEndpoint+")")
+	f.StringVar(&o.s3Bucket, "s3-bucket", envOr("S3_BUCKET", ""),
+		"S3 bucket (env S3_BUCKET, which is ours: AWS has no standard variable for a bucket)")
+	f.BoolVar(&o.s3SSL, "s3-ssl", false, "use TLS for S3; an https:// endpoint says it too")
+	f.BoolVar(&o.s3Anonymous, "s3-anonymous", false,
+		"send unsigned requests, for a store with no IAM, instead of "+lake.EnvAccessKey+"/"+lake.EnvSecretKey)
 	f.StringVar(&o.keyPrefix, "key-prefix", origin, "object key prefix")
 	f.StringVar(&o.instance, "instance-id", "", "unique instance id (default hostname-pid)")
 	f.IntVar(&o.cfg.BatchMaxRows, "batch-max-rows", drain.DefaultBatchMaxRows,

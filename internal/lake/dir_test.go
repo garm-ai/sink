@@ -66,8 +66,8 @@ func oneRowBatch(day time.Time, app string) drain.Batch {
 // destination's alone, and a lake on disk must not care whether they are set,
 // unset, or wrong.
 func TestALakeOnDiskNeedsNoCredentials(t *testing.T) {
-	t.Setenv("S3_ACCESS_KEY", "")
-	t.Setenv("S3_SECRET_KEY", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	root := t.TempDir()
 	sink := &lake.ParquetSink{Dest: dirStore(t, root), KeyPrefix: "ledger", InstanceID: "box-77"}
 	if err := sink.Flush(context.Background(), oneRowBatch(time.Date(2026, 9, 29, 9, 0, 0, 0, time.UTC), "agentd")); err != nil {

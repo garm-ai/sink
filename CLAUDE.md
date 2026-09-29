@@ -35,7 +35,7 @@ internal/
 **Everything starts `internal/`.** Promoting a package later is easy where
 demoting one is breaking.
 
-## The six things that are easy to get wrong
+## The seven things that are easy to get wrong
 
 **1. The batch limit counts rows, not messages.** One ledger message is a
 `garm.ledger.v1.Batch` holding hundreds of events. A limit of 1000 messages is
@@ -69,6 +69,18 @@ disk a part is written as `<name>.parquet.incomplete` and renamed onto its
 name: the rename is atomic, and the suffix is a suffix rather than a hidden
 staging directory because DuckDB's `**` matches dot-directories — hiding the
 staging area would not have hidden it from a query.
+
+**7. The S3 side reads the AWS-standard variable names, and only those.**
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+`AWS_REGION`/`AWS_DEFAULT_REGION`, `AWS_ENDPOINT_URL` — the ones the AWS CLI,
+the SDKs, DuckDB's `httpfs` and this platform's compose already set. Only the
+bucket is ours (`S3_BUCKET`), because AWS addresses a bucket in the URL and has
+no variable for one. `S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_ENDPOINT` were
+read until v0.5.0 and are now refused by name, because reading a private
+spelling turns a correctly configured machine into `Access Denied` from the
+store — which names neither a credential nor a variable. For the same reason
+there is no silent fallback to unsigned requests: a store with no IAM is
+`--s3-anonymous`, and the startup line says which of the two is in use.
 
 ## Testing
 
