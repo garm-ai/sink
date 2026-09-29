@@ -14,7 +14,15 @@
   queue with no leader election.
 - `internal/streams` — the two streams' configurations and `provision`, which
   creates what is missing and refuses what exists with the wrong policy.
-- `cmd/garm-sink` — `provision`, `drain ledger`, `drain audit`.
+- `internal/tail` — `garm-sink tail ledger|audit`: an ephemeral `AckNone`
+  consumer, deleted on exit, printing one JSON object per event under the
+  lake's column names (`row.Columns`, the one list the Parquet writer also
+  builds from). `--since` (count or duration), `--from-start`, `--follow`,
+  repeatable client-side `--filter column=value`, `--pretty`, `--no-detail`.
+  Tested against the embedded broker, including that a half-acked durable on
+  the same stream does not move.
+- `cmd/garm-sink` — `provision`, `drain ledger`, `drain audit`, `tail ledger`,
+  `tail audit`.
 
 ## Not covered by tests, and why
 
@@ -62,6 +70,12 @@ fills the sink's own dead-letter writes start failing, which naks every batch
 containing a bad record. That is the safe direction and a loud one, but it is a
 cliff rather than a slope.
 
+**`tail` redacts nothing.** It prints rows as they are on the stream, and
+`error_detail` may carry unsanitised free text. `--no-detail` drops that
+column; there is no allow-list of columns, no per-tenant view and no audit of
+who tailed what. It is a debugging eye for someone already entitled to read
+the stream, and nothing here checks that they are — NATS credentials do.
+
 **No metrics.** Rows per flush, flush latency, dead letters by reason and
 consumer lag are all things an operator will want, and all of them are
 currently a log line at best.
@@ -77,14 +91,18 @@ and a human.
 internal/cli       100%
 internal/streams    94%
 internal/drain      92%
-internal/lake       90%
-internal/row        82%
-cmd/garm-sink       49%
+internal/row        90%
+internal/lake       85%
+internal/tail       84%
+cmd/garm-sink       48%
 ```
 
 `cmd/garm-sink` is flag wiring around a NATS connection and a signal handler:
-the flag surface and `ackWait` are tested, `runDrain` itself is not, and what
-is worth testing in it is tested where it lives. `internal/row`'s remainder is
+the flag surface, `ackWait` and the tail flag set are tested, `runDrain` and
+`runTail` themselves are not, and what is worth testing in them is tested
+where it lives. `internal/tail`'s remainder is the `--since <duration>` start
+against a live broker (the config mapping is tested; the timing is not) and
+the error paths of writing to a closed stdout. `internal/row`'s remainder is
 the defensive half of its error paths — a `json.Marshal` of a `map[string]string`
 that fails, a `proto.Marshal` of a message that just unmarshalled.
 

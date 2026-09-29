@@ -323,3 +323,70 @@ func listJSON(v []string) string {
 	}
 	return string(b)
 }
+
+// Column is one column of the lake's schema: its name, and how to read it
+// from a Row.
+type Column struct {
+	Name string
+	Get  func(Row) any
+}
+
+// Columns is the schema, in order — the ONE list of what a row is called
+// when it leaves this process.
+//
+// The Parquet writer builds its DDL from it and `garm-sink tail` prints keys
+// from it, so a column added here is added to both, and a name can never be
+// spelled one way in the lake and another way on a terminal. The partition
+// column `date` is not here: the writer derives it from `time`, and a
+// derived column belongs to the layout, not to the row.
+var Columns = []Column{
+	{"event_id", func(r Row) any { return r.EventID }},
+	{"time", func(r Row) any { return r.Time }},
+	{"tenant", func(r Row) any { return r.Tenant }},
+	{"app", func(r Row) any { return r.App }},
+	{"feature", func(r Row) any { return r.Feature }},
+	{"run_id", func(r Row) any { return r.RunID }},
+	{"correlation_id", func(r Row) any { return r.CorrelationID }},
+	{"causation_id", func(r Row) any { return r.CausationID }},
+	{"budget_id", func(r Row) any { return r.BudgetID }},
+	{"tags_json", func(r Row) any { return r.TagsJSON }},
+	{"prompt_name", func(r Row) any { return r.PromptName }},
+	{"prompt_hash", func(r Row) any { return r.PromptHash }},
+	{"alias", func(r Row) any { return r.Alias }},
+	{"resolved_model", func(r Row) any { return r.ResolvedModel }},
+	{"model_overridden", func(r Row) any { return r.ModelOverridden }},
+	{"input_tokens", func(r Row) any { return r.InputTokens }},
+	{"output_tokens", func(r Row) any { return r.OutputTokens }},
+	{"cached_tokens", func(r Row) any { return r.CachedTokens }},
+	{"reasoning_tokens", func(r Row) any { return r.ReasoningTokens }},
+	{"cost_usd", func(r Row) any { return r.CostUSD }},
+	{"cost_source", func(r Row) any { return r.CostSource }},
+	{"latency_ms", func(r Row) any { return r.LatencyMS }},
+	{"provider_request_id", func(r Row) any { return r.ProviderRequestID }},
+	{"fallback_used", func(r Row) any { return r.FallbackUsed }},
+	{"outcome", func(r Row) any { return r.Outcome }},
+	{"error_kind", func(r Row) any { return r.ErrorKind }},
+	{"policy_mode", func(r Row) any { return r.PolicyMode }},
+	{"policy_violations", func(r Row) any { return r.PolicyViolationsJSON }},
+	{"tool", func(r Row) any { return r.Tool }},
+	{"principal_subject", func(r Row) any { return r.PrincipalSubject }},
+	{"principal_actor", func(r Row) any { return r.PrincipalActor }},
+	{"principal_kind", func(r Row) any { return r.PrincipalKind }},
+	{"chain_depth", func(r Row) any { return r.ChainDepth }},
+	{"clearance_effective", func(r Row) any { return r.ClearanceEffective }},
+	{"compartments_effective", func(r Row) any { return r.CompartmentsEffectiveJSON }},
+	{"redaction_plan", func(r Row) any { return r.RedactionPlan }},
+	{"redaction_count", func(r Row) any { return r.RedactionCount }},
+	{"disclosed_count", func(r Row) any { return r.DisclosedCount }},
+	{"error_detail", func(r Row) any { return r.ErrorDetail }},
+}
+
+// ColumnNamed finds a column by its lake name.
+func ColumnNamed(name string) (Column, bool) {
+	for _, c := range Columns {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return Column{}, false
+}

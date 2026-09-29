@@ -15,7 +15,7 @@ import (
 // This binary runs unattended; `garm-sink drain $STREAM` with the variable
 // unset has to fail loudly.
 func TestEveryParentCommandRefusesInsteadOfPrintingHelp(t *testing.T) {
-	for _, path := range [][]string{nil, {"drain"}} {
+	for _, path := range [][]string{nil, {"drain"}, {"tail"}} {
 		cmd, _, err := newRoot().Find(path)
 		if err != nil {
 			t.Fatalf("%v: %v", path, err)
@@ -35,10 +35,33 @@ func TestEveryParentCommandRefusesInsteadOfPrintingHelp(t *testing.T) {
 	}
 }
 
-func TestBothStreamsHaveADrainSubcommand(t *testing.T) {
-	for _, name := range []string{"ledger", "audit"} {
-		if cmd, rest, err := newRoot().Find([]string{"drain", name}); err != nil || len(rest) > 0 {
-			t.Fatalf("drain %s does not resolve: cmd=%v rest=%q err=%v", name, cmd, rest, err)
+func TestBothStreamsHaveADrainAndATailSubcommand(t *testing.T) {
+	for _, verb := range []string{"drain", "tail"} {
+		for _, name := range []string{"ledger", "audit"} {
+			if cmd, rest, err := newRoot().Find([]string{verb, name}); err != nil || len(rest) > 0 {
+				t.Fatalf("%s %s does not resolve: cmd=%v rest=%q err=%v", verb, name, cmd, rest, err)
+			}
+		}
+	}
+}
+
+// A tail has no durable, no S3 and no batch: the flags that would make it a
+// drain must not be there, and the ones that make it a reader must.
+func TestATailHasAReadersFlagsAndNotADrains(t *testing.T) {
+	for _, origin := range []string{"ledger", "audit"} {
+		f := flags(t, "tail", origin)
+		for _, must := range []string{"since", "from-start", "follow", "filter", "pretty", "no-detail", "nats-url"} {
+			if _, ok := f[must]; !ok {
+				t.Errorf("tail %s has no --%s", origin, must)
+			}
+		}
+		for _, mustNot := range []string{"durable", "s3-endpoint", "batch-max-rows"} {
+			if _, ok := f[mustNot]; ok {
+				t.Errorf("tail %s has --%s; a tail is not a drain", origin, mustNot)
+			}
+		}
+		if f["since"] != "100" {
+			t.Errorf("tail %s --since defaults to %q, want the last 100 messages", origin, f["since"])
 		}
 	}
 }

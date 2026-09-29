@@ -205,3 +205,21 @@ func TestWritingNoRowsWritesNothingRatherThanAnEmptyFile(t *testing.T) {
 		t.Fatalf("an empty flush left files behind: %v", found)
 	}
 }
+
+// The lake's schema is row.Columns plus the derived partition column, in
+// that order. `garm-sink tail` prints row.Columns, so this is the test that
+// a line on a terminal and a row in the lake are one schema.
+func TestTheParquetSchemaIsTheRowsColumnsPlusDate(t *testing.T) {
+	got := lake.Columns()
+	if len(got) != len(row.Columns)+1 {
+		t.Fatalf("lake has %d columns, row has %d; want row's plus date", len(got), len(row.Columns))
+	}
+	for i, c := range row.Columns {
+		if got[i] != c.Name {
+			t.Errorf("column %d: lake %q, row %q", i, got[i], c.Name)
+		}
+	}
+	if got[len(got)-1] != "date" {
+		t.Errorf("last column is %q, want the partition column date", got[len(got)-1])
+	}
+}

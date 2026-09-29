@@ -49,7 +49,7 @@ func newRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd(), newProvisionCmd(), newDrainCmd())
+	root.AddCommand(newVersionCmd(), newProvisionCmd(), newDrainCmd(), newTailCmd())
 	// The root refuses too. This binary runs unattended, and a parent that
 	// prints help and exits 0 is a green deploy that moved no data.
 	return cli.RequireSubcommand(root)

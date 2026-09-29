@@ -2,7 +2,7 @@
 
 JetStream → micro-batch → ZSTD Parquet → S3-compatible object store. One
 binary, `garm-sink`, with three verbs: `provision`, `drain ledger`,
-`drain audit`.
+`drain audit` — and a fourth that only reads: `tail ledger`, `tail audit`.
 
 ## The invariant
 
@@ -19,10 +19,12 @@ folding this into the sidecar took it from 22.5 MB to 66.8 MB.
 ## Layout
 
 ```
-cmd/garm-sink/          the binary: provision, drain ledger, drain audit
+cmd/garm-sink/          the binary: provision, drain ledger|audit, tail ledger|audit
 internal/
-  row/                  wire message -> Parquet rows, and what cannot become one
+  row/                  wire message -> Parquet rows, and what cannot become one;
+                        row.Columns is THE column list, shared by lake and tail
   drain/                the consume loop and the ack discipline; dead letters
+  tail/                 the debugging eye: ephemeral AckNone consumer -> JSON lines
   lake/                 DuckDB writes the Parquet, minio puts it
   streams/              the two streams' configurations, and provisioning
   cli/                  the cobra conventions shared with the other repositories
@@ -31,7 +33,7 @@ internal/
 **Everything starts `internal/`.** Promoting a package later is easy where
 demoting one is breaking.
 
-## The four things that are easy to get wrong
+## The five things that are easy to get wrong
 
 **1. The batch limit counts rows, not messages.** One ledger message is a
 `garm.ledger.v1.Batch` holding hundreds of events. A limit of 1000 messages is
@@ -51,6 +53,11 @@ publisher must never block a request. `provision` refuses to patch, ever.
 **4. AckWait has to outlast a whole cycle.** BatchInterval plus FlushTimeout
 plus slack. Shorter and JetStream redelivers mid-flush, two instances write the
 same rows continuously, and the duplicate story stops being about failures.
+
+**5. `tail` never acks and never creates a durable.** It is pointed at live
+planes. Its consumer is ephemeral, `AckNone`, and deleted on exit, and a test
+with a half-acked durable on the same stream asserts the durable did not
+move. A `tail` that acked would be a drain that loses rows.
 
 ## Testing
 
