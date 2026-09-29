@@ -1,8 +1,9 @@
 # sink
 
 **The record streams, drained into a lake.** NATS JetStream in; micro-batched
-ZSTD Parquet on an S3-compatible object store out, hive-partitioned so DuckDB —
-and later Iceberg or DuckLake — reads it without being told anything.
+ZSTD Parquet out — onto an S3-compatible object store, or onto a directory on
+this machine — hive-partitioned so DuckDB, and later Iceberg or DuckLake, reads
+it without being told anything.
 
 Two streams, two policies. `GARM_LEDGER` carries metering; `GARM_AUDIT` carries
 the records something is obliged to keep.
@@ -58,6 +59,9 @@ sinkd tail ledger        print GARM_LEDGER rows as JSON lines, without consuming
 sinkd tail audit         print GARM_AUDIT rows as JSON lines, without consuming
 ```
 
+`drain` needs a destination and has no default for one: pass `--lake-dir
+<path>`, or `--s3-endpoint` and `--s3-bucket`. Naming both is an error.
+
 The binary was `garm-sink` before v0.3.0; the module path is unchanged, so
 `go install github.com/garm-ai/sink/cmd/sinkd@v0.3.0` is the new spelling and
 tags up to v0.2.0 keep `cmd/garm-sink`.
@@ -70,6 +74,46 @@ erase both the change and the evidence of who made it.
 Any number of drains can run against one stream: they share a durable consumer,
 and object names carry `<hostname>-<pid>` plus the stream-sequence range, so no
 two instances can write the same key.
+
+## A lake on disk
+
+The lake does not need an object store. `--lake-dir` writes the same objects to
+a directory, which is what makes it usable beside a platform running from one
+binary with an embedded NATS server and no SeaweedFS.
+
+```
+sinkd drain ledger --lake-dir ./lake
+```
+
+Query it where it lies:
+
+```sql
+SELECT * FROM read_parquet('./lake/ledger/**/*.parquet', hive_partitioning=true)
+QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY time) = 1;
+```
+
+**It is the same format.** The same ZSTD Parquet, hive-partitioned by
+`(date, app)`, under the same keys — `ledger/date=2026-09-29/app=agentd/part-….parquet`
+is a path here and an object key there, built by one piece of code for both. So
+a directory can be copied into an object store later and read unchanged: put
+`s3://garm-lake/` where `./lake/` was and every query keeps working.
+
+A part is written under `<name>.parquet.incomplete` in its final directory and
+renamed onto its name. The rename is atomic, so a reader globbing `*.parquet`
+never opens a half-written file — and a crash leaves the temporary file rather
+than a corrupt part. Sweep them with:
+
+```
+find ./lake -name '*.parquet.incomplete' -delete
+```
+
+`--lake-dir` needs no credentials. `S3_ACCESS_KEY` and `S3_SECRET_KEY` are read
+on the S3 path and nowhere else, and the drain's first log line says which
+destination is in use.
+
+What a directory does not give you is in [KNOWN-GAPS](KNOWN-GAPS.md): no
+lifecycle, no replication, and no compaction — that last one is true of both
+destinations.
 
 ## Watching a stream
 

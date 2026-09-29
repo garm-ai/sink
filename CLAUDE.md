@@ -1,8 +1,9 @@
 # sink — the record streams, drained into a lake
 
-JetStream → micro-batch → ZSTD Parquet → S3-compatible object store. One
-binary, `sinkd`, with three verbs: `provision`, `drain ledger`,
-`drain audit` — and a fourth that only reads: `tail ledger`, `tail audit`.
+JetStream → micro-batch → ZSTD Parquet → an S3-compatible object store, or a
+directory on this machine. One binary, `sinkd`, with three verbs: `provision`,
+`drain ledger`, `drain audit` — and a fourth that only reads: `tail ledger`,
+`tail audit`.
 
 ## The invariant
 
@@ -25,7 +26,8 @@ internal/
                         row.Columns is THE column list, shared by lake and tail
   drain/                the consume loop and the ack discipline; dead letters
   tail/                 the debugging eye: ephemeral AckNone consumer -> JSON lines
-  lake/                 DuckDB writes the Parquet, minio puts it
+  lake/                 DuckDB writes the Parquet; a Destination lands it —
+                        minio on S3, or DirStore under --lake-dir
   streams/              the two streams' configurations, and provisioning
   cli/                  the cobra conventions shared with the other repositories
 ```
@@ -33,7 +35,7 @@ internal/
 **Everything starts `internal/`.** Promoting a package later is easy where
 demoting one is breaking.
 
-## The five things that are easy to get wrong
+## The six things that are easy to get wrong
 
 **1. The batch limit counts rows, not messages.** One ledger message is a
 `garm.ledger.v1.Batch` holding hundreds of events. A limit of 1000 messages is
@@ -58,6 +60,15 @@ same rows continuously, and the duplicate story stops being about failures.
 planes. Its consumer is ephemeral, `AckNone`, and deleted on exit, and a test
 with a half-acked durable on the same stream asserts the durable did not
 move. A `tail` that acked would be a drain that loses rows.
+
+**6. The two destinations produce the same keys, and that is load-bearing.**
+`--lake-dir` exists so the lake works with no object store; its whole value is
+that a directory can be copied into a bucket and read unchanged. Both
+destinations therefore build their keys in `walkParts` and nowhere else. On
+disk a part is written as `<name>.parquet.incomplete` and renamed onto its
+name: the rename is atomic, and the suffix is a suffix rather than a hidden
+staging directory because DuckDB's `**` matches dot-directories — hiding the
+staging area would not have hidden it from a query.
 
 ## Testing
 

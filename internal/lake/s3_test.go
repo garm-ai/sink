@@ -2,6 +2,7 @@ package lake_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,11 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/garm-ai/sink/internal/drain"
 	"github.com/garm-ai/sink/internal/lake"
-	"github.com/garm-ai/sink/internal/row"
 )
 
 // fakeS3 is enough of the S3 API for the three calls this package makes:
@@ -72,10 +70,10 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code><Message>no</Message></Error>`))
 			return
 		}
-		body := make([]byte, r.ContentLength)
-		if _, err := r.Body.Read(body); err != nil && r.ContentLength > 0 {
-			// io.EOF on a full read is normal.
-			_ = err
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 		f.objects[bucket+"/"+key] = body
 		w.Header().Set("ETag", `"d41d8cd98f00b204e9800998ecf8427e"`)
@@ -92,6 +90,18 @@ func (f *fakeS3) keys() []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// objects is every key the store holds and its bytes, so a test can
+// materialise what landed and read it with DuckDB.
+func (f *fakeS3) snapshotObjects() map[string][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string][]byte, len(f.objects))
+	for k, v := range f.objects {
+		out[k] = v
+	}
 	return out
 }
 
@@ -112,7 +122,7 @@ func uploader(t *testing.T, endpoint, bucket string) *lake.Uploader {
 
 func TestEnsureBucketCreatesWhatIsMissing(t *testing.T) {
 	fake, endpoint := newFakeS3(t)
-	if err := uploader(t, endpoint, "garm-lake").EnsureBucket(context.Background()); err != nil {
+	if err := uploader(t, endpoint, "garm-lake").Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.hasBucket("garm-lake") {
@@ -122,7 +132,7 @@ func TestEnsureBucketCreatesWhatIsMissing(t *testing.T) {
 
 func TestEnsureBucketLeavesAnExistingBucketAlone(t *testing.T) {
 	fake, endpoint := newFakeS3(t, "garm-lake")
-	if err := uploader(t, endpoint, "garm-lake").EnsureBucket(context.Background()); err != nil {
+	if err := uploader(t, endpoint, "garm-lake").Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.hasBucket("garm-lake") {
@@ -156,7 +166,7 @@ func TestAnUploadedObjectKeepsItsHivePathAndGetsAnInstanceUniqueName(t *testing.
 		"date=2026-09-22/app=svc-b/data_0.parquet": "b",
 	})
 	keys, err := uploader(t, endpoint, "garm-lake").
-		UploadTree(context.Background(), dir, "ledger", "box-77", 100, 250)
+		Publish(context.Background(), dir, "ledger", "box-77", 100, 250)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +195,7 @@ func TestOnlyParquetFilesAreUploaded(t *testing.T) {
 		"date=2026-09-22/app=svc-a/.DS_Store":      "junk",
 	})
 	keys, err := uploader(t, endpoint, "garm-lake").
-		UploadTree(context.Background(), dir, "ledger", "box-77", 1, 2)
+		Publish(context.Background(), dir, "ledger", "box-77", 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +212,7 @@ func TestARefusedPutFailsTheWholeUpload(t *testing.T) {
 	fake.failPut = true
 	dir := writeTree(t, map[string]string{"date=2026-09-22/app=svc-a/data_0.parquet": "a"})
 	if _, err := uploader(t, endpoint, "garm-lake").
-		UploadTree(context.Background(), dir, "ledger", "box-77", 1, 2); err == nil {
+		Publish(context.Background(), dir, "ledger", "box-77", 1, 2); err == nil {
 		t.Fatal("a 500 from the store was reported as a successful upload")
 	}
 }
@@ -216,60 +226,14 @@ func containsKey(keys []string, want string) bool {
 	return false
 }
 
-// The two halves together: rows in, objects on the store. This is the seam
-// `drain` depends on — it acks a batch because Flush returned nil — so "the
-// Parquet was written but nothing was uploaded" has to be impossible rather
-// than merely unlikely.
-func TestTheParquetSinkWritesTheBatchAndUploadsEveryPartition(t *testing.T) {
-	fake, endpoint := newFakeS3(t, "garm-lake")
-	day := time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC)
-	sink := &lake.ParquetSink{
-		Uploader:   uploader(t, endpoint, "garm-lake"),
-		KeyPrefix:  "ledger",
-		InstanceID: "box-77",
-	}
-	err := sink.Flush(context.Background(), drain.Batch{
-		FirstSeq: 10, LastSeq: 12,
-		Rows: []row.Row{
-			{EventID: "e1", Time: day, Tenant: "acme", App: "svc-a", TagsJSON: "{}"},
-			{EventID: "e2", Time: day, Tenant: "acme", App: "svc-b", TagsJSON: "{}"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := fake.keys()
-	if len(got) != 2 {
-		t.Fatalf("uploaded %v, want one object per app partition", got)
-	}
-	for _, want := range []string{
-		"garm-lake/ledger/date=2026-09-22/app=svc-a/part-box-77-10-12-",
-		"garm-lake/ledger/date=2026-09-22/app=svc-b/part-box-77-10-12-",
-	} {
-		found := false
-		for _, k := range got {
-			found = found || strings.HasPrefix(k, want)
+// The S3 half of the same startup line: the bucket and the endpoint, so two
+// drains pointed at different stores are told apart in a log.
+func TestDescribeNamesTheBucketAndTheEndpoint(t *testing.T) {
+	_, endpoint := newFakeS3(t, "garm-lake")
+	got := uploader(t, endpoint, "garm-lake").Describe()
+	for _, want := range []string{"garm-lake", endpoint} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Describe() = %q, which does not name %q", got, want)
 		}
-		if !found {
-			t.Errorf("no object under %q; uploaded %v", want, got)
-		}
-	}
-	// The temp directory is removed even on the happy path: these are tens of
-	// megabytes each, every few minutes, forever.
-	if entries, _ := filepath.Glob(filepath.Join(os.TempDir(), "sinkd-*")); len(entries) > 0 {
-		t.Errorf("the sink left scratch directories behind: %v", entries)
-	}
-}
-
-// An empty batch must not write an object. An empty Parquet file in the lake
-// is a file every reader's glob still opens.
-func TestAnEmptyBatchUploadsNothing(t *testing.T) {
-	fake, endpoint := newFakeS3(t, "garm-lake")
-	sink := &lake.ParquetSink{Uploader: uploader(t, endpoint, "garm-lake"), KeyPrefix: "ledger", InstanceID: "box-77"}
-	if err := sink.Flush(context.Background(), drain.Batch{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := fake.keys(); len(got) != 0 {
-		t.Fatalf("an empty batch uploaded %v", got)
 	}
 }

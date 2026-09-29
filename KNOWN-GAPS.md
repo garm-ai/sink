@@ -9,9 +9,12 @@
 - `internal/drain` — the consume loop. Ack after a successful flush, nak for
   redelivery, dead-letter then terminate, and a shutdown flush on a context
   derived with `WithoutCancel`.
-- `internal/lake` — DuckDB writes hive-partitioned ZSTD Parquet, minio puts the
-  tree. Instance-unique object names, so any number of drains share one work
-  queue with no leader election.
+- `internal/lake` — DuckDB writes hive-partitioned ZSTD Parquet and a
+  `Destination` lands it: minio puts the tree on an S3-compatible store, or
+  `DirStore` renames it into a directory on this machine (`--lake-dir`). Both
+  build their keys from one walk, so the path on disk and the object key are
+  the same string by construction. Instance-unique names, so any number of
+  drains share one work queue with no leader election.
 - `internal/streams` — the two streams' configurations and `provision`, which
   creates what is missing and refuses what exists with the wrong policy.
 - `internal/tail` — `sinkd tail ledger|audit`: an ephemeral `AckNone`
@@ -35,9 +38,12 @@ is a single PUT), minio's retry behaviour, or the quirks of any particular
 store. Those need a real MinIO or SeaweedFS, which belongs in a compose-based
 integration job rather than in `go test`.
 
-**No end-to-end run from a NATS message to an object.** `ParquetSink.Flush` is
-tested against real DuckDB and the fake store, and the drain loop is tested
-against a real broker with a fake sink, but nothing runs all three at once.
+**No end-to-end run from a NATS message to an OBJECT.** The local destination
+now has one — a message on the embedded broker, through the drain, into a
+temporary directory, read back with `read_parquet` over the hive glob — because
+`--lake-dir` needs nothing stood up for it. The S3 half still does not: the PUT
+is the only step that test does not exercise, and standing up a real store for
+it belongs in a compose-based integration job.
 
 **Producer/consumer agreement is untested.** That a real garmd publishes what
 this decodes. The faithful version needs the dependency CI exists to refuse, so
@@ -46,7 +52,31 @@ here, and not in a skip.
 
 ## Not built
 
-**Compaction.** Five-minute files at low volume are still small files. A lake
+**A lake on disk has no lifecycle and no replication.** `--lake-dir` gives the
+format and the keys, not the operational surface around them. There is no
+expiry, no tiering, no versioning, no server-side encryption and no second
+copy: a directory is exactly as durable as the disk it is on. It is a
+development destination, and a production lake still wants an object store —
+which is why the two produce identical trees.
+
+**The rename is atomic; the directory entry is not fsynced.** A part is written
+to `<name>.parquet.incomplete`, fsynced, and renamed onto its key, so a reader
+never sees a prefix of a file. The parent directory is not fsynced afterwards,
+so a power loss in the window between the rename and the filesystem's own
+flush can lose a part whose messages the drain has already acked. On S3 the PUT
+is durable before the ack. Closing it is one `fsync` on the directory handle
+per flush and a test that cannot be written without a crashing machine, so it
+is written down rather than half-done.
+
+**Nothing sweeps `*.parquet.incomplete`.** A crash mid-flush leaves one, and no
+query will ever read it — the suffix is there so a reader's `**/*.parquet` does
+not match it — but nothing deletes it either. The README gives the `find`
+command; a drain that swept its own leftovers at startup would be three lines
+and is not there.
+
+**Compaction.** Five-minute files at low volume are still small files. This is
+true of both destinations: neither the bucket nor the directory gets a job that
+rewrites a day's partition. A lake
 wants a periodic job that rewrites a day's partition into a few large files and
 deletes the parts. Nothing here does that, and until it exists the small-file
 problem is deferred rather than solved: better than 2,880 files per day per app,
@@ -85,6 +115,19 @@ non-zero, deliberately, but there is no `--force` and no guided path from "the
 audit stream is wrong" to a corrected stream. Today that is `nats stream edit`
 and a human.
 
+## Candidates for the next release
+
+**sink does not need DuckDB to write.** Writing Parquet is the drain's job and
+reading it is the user's, so nothing here has to link a query engine: a pure-Go
+writer (`parquet-go`) would drop the cgo dependency and the tens of megabytes
+of static library, shrink the binary, speed the build, and let `garmstack`
+embed sink rather than ask a developer to run it beside. The risk is schema
+fidelity: DuckDB's `COPY` decides the Parquet types today, and every column in
+`internal/row` — the timestamps, the nullable strings, the derived `date`
+partition, the ZSTD settings and the row-group statistics — would have to come
+out byte-compatible enough that a reader cannot tell which writer produced a
+file. That is a test matrix against the existing writer, not a rewrite.
+
 ## Coverage
 
 ```
@@ -92,17 +135,19 @@ internal/cli       100%
 internal/streams    94%
 internal/drain      92%
 internal/row        90%
-internal/lake       85%
+internal/lake       84%
 internal/tail       84%
-cmd/sinkd           48%
+cmd/sinkd           51%
 ```
 
 `cmd/sinkd` is flag wiring around a NATS connection and a signal handler:
-the flag surface, `ackWait` and the tail flag set are tested, `runDrain` and
-`runTail` themselves are not, and what is worth testing in them is tested
-where it lives. `internal/tail`'s remainder is the `--since <duration>` start
+the flag surface, `ackWait`, `destinationOf` and the tail flag set are tested,
+`runDrain` and `runTail` themselves are not, and what is worth testing in them
+is tested where it lives. `internal/tail`'s remainder is the `--since <duration>` start
 against a live broker (the config mapping is tested; the timing is not) and
-the error paths of writing to a closed stdout. `internal/row`'s remainder is
+the error paths of writing to a closed stdout. `internal/lake`'s remainder is the error paths of the two destinations that
+need a failing disk or a failing store to reach — a short read while copying a
+part, an `fsync` that refuses. `internal/row`'s remainder is
 the defensive half of its error paths — a `json.Marshal` of a `map[string]string`
 that fails, a `proto.Marshal` of a message that just unmarshalled.
 

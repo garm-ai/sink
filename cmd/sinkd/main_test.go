@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -55,7 +57,7 @@ func TestATailHasAReadersFlagsAndNotADrains(t *testing.T) {
 				t.Errorf("tail %s has no --%s", origin, must)
 			}
 		}
-		for _, mustNot := range []string{"durable", "s3-endpoint", "batch-max-rows"} {
+		for _, mustNot := range []string{"durable", "s3-endpoint", "lake-dir", "batch-max-rows"} {
 			if _, ok := f[mustNot]; ok {
 				t.Errorf("tail %s has --%s; a tail is not a drain", origin, mustNot)
 			}
@@ -118,11 +120,13 @@ func TestTheEnvironmentFallbacksAreRead(t *testing.T) {
 	t.Setenv("NATS_URL", "nats://example:4222")
 	t.Setenv("S3_ENDPOINT", "s3.example:9000")
 	t.Setenv("S3_BUCKET", "other-bucket")
+	t.Setenv("LAKE_DIR", "/srv/lake")
 	f := flags(t, "drain", "ledger")
 	for name, want := range map[string]string{
 		"nats-url":    "nats://example:4222",
 		"s3-endpoint": "s3.example:9000",
 		"s3-bucket":   "other-bucket",
+		"lake-dir":    "/srv/lake",
 	} {
 		if f[name] != want {
 			t.Errorf("flag %q default = %q, want the environment value %q", name, f[name], want)
@@ -189,5 +193,111 @@ func TestProvisionDryRunShowsTheOppositeDiscardPolicies(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("--dry-run output does not mention %q:\n%s", want, got)
 		}
+	}
+}
+
+// Neither destination is a default, and the two are mutually exclusive.
+//
+// The old default was 127.0.0.1:9000 and a bucket named garm-lake, which meant
+// a forgotten flag started a drain, took a durable consumer, and failed five
+// minutes later with a batch already unacked. There are two destinations now
+// and no way to guess which was meant, so the command refuses at startup and
+// names both.
+func TestADrainTakesOneDestinationAndRefusesBothOrNeither(t *testing.T) {
+	for name, tc := range map[string]struct {
+		o        drainOpts
+		wantType string
+		wantErr  []string
+	}{
+		"neither": {
+			o:       drainOpts{},
+			wantErr: []string{"--lake-dir", "--s3-endpoint", "--s3-bucket"},
+		},
+		"both": {
+			o:       drainOpts{lakeDir: "./lake", s3Endpoint: "127.0.0.1:9000", s3Bucket: "garm-lake"},
+			wantErr: []string{"--lake-dir", "--s3-endpoint", "two different destinations"},
+		},
+		"lake dir and a stray bucket": {
+			o:       drainOpts{lakeDir: "./lake", s3Bucket: "garm-lake"},
+			wantErr: []string{"two different destinations"},
+		},
+		"endpoint without a bucket": {
+			o:       drainOpts{s3Endpoint: "127.0.0.1:9000"},
+			wantErr: []string{"--s3-bucket"},
+		},
+		"bucket without an endpoint": {
+			o:       drainOpts{s3Bucket: "garm-lake"},
+			wantErr: []string{"--s3-endpoint"},
+		},
+		"lake dir": {
+			o:        drainOpts{lakeDir: "./lake"},
+			wantType: "*lake.DirStore",
+		},
+		"s3": {
+			o:        drainOpts{s3Endpoint: "127.0.0.1:9000", s3Bucket: "garm-lake"},
+			wantType: "*lake.Uploader",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dest, err := destinationOf(tc.o)
+			if tc.wantType == "" {
+				if err == nil {
+					t.Fatalf("accepted %+v and chose %T", tc.o, dest)
+				}
+				for _, want := range tc.wantErr {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%+v: %v", tc.o, err)
+			}
+			if got := fmt.Sprintf("%T", dest); got != tc.wantType {
+				t.Fatalf("chose %s, want %s", got, tc.wantType)
+			}
+		})
+	}
+}
+
+// The startup line says where the rows are going. An operator reading the
+// first line of a log should not have to infer the destination from which
+// flags they think they passed.
+func TestTheStartupLineNamesTheDestination(t *testing.T) {
+	for name, tc := range map[string]struct {
+		o    drainOpts
+		want []string
+	}{
+		"lake dir": {drainOpts{lakeDir: "./lake"}, []string{"dir", "lake"}},
+		"s3":       {drainOpts{s3Endpoint: "s3.example:9000", s3Bucket: "garm-lake"}, []string{"garm-lake", "s3.example:9000"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dest, err := destinationOf(tc.o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(dest.Describe(), want) {
+					t.Errorf("the startup line %q does not name %q", dest.Describe(), want)
+				}
+			}
+		})
+	}
+}
+
+// --lake-dir needs no credentials. S3_ACCESS_KEY and S3_SECRET_KEY belong to
+// the S3 destination alone: a lake on disk has nothing to authenticate to, and
+// reading them for it would make an unset variable look relevant to a failure
+// that has nothing to do with it.
+func TestALakeDirDestinationIsBuiltWithoutS3Credentials(t *testing.T) {
+	t.Setenv("S3_ACCESS_KEY", "")
+	t.Setenv("S3_SECRET_KEY", "")
+	dest, err := destinationOf(drainOpts{lakeDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("a lake on disk asked for credentials: %v", err)
+	}
+	if err := dest.Ensure(context.Background()); err != nil {
+		t.Fatalf("Ensure: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -52,9 +53,9 @@ func newDrainCmd() *cobra.Command {
 	}
 	d.AddCommand(
 		newDrainStreamCmd("ledger", wire.LedgerStream, wire.LedgerSubject+".>", row.EnvelopeBatch,
-			"Batch the ledger stream into hive-partitioned Parquet on S3"),
+			"Batch the ledger stream into hive-partitioned Parquet"),
 		newDrainStreamCmd("audit", wire.AuditStream, wire.AuditSubject+".>", row.EnvelopeEvent,
-			"Batch the audit stream into hive-partitioned Parquet on S3"),
+			"Batch the audit stream into hive-partitioned Parquet"),
 	)
 	return cli.RequireSubcommand(d)
 }
@@ -66,12 +67,45 @@ type drainOpts struct {
 	envelope   row.Envelope
 	natsURL    string
 	durable    string
+	lakeDir    string
 	s3Endpoint string
 	s3Bucket   string
 	s3SSL      bool
 	keyPrefix  string
 	instance   string
 	cfg        drain.Config
+}
+
+// destinationOf turns the destination flags into one destination, or into the
+// error that says which flags were wrong.
+//
+// There is no default destination on purpose. It used to be 127.0.0.1:9000 and
+// a bucket named garm-lake, which meant that `sinkd drain ledger` with a
+// forgotten flag started, connected to nothing, and reported a connection
+// error five minutes into the first flush. Now there are two destinations and
+// no way to guess which one was meant, so the command refuses at startup and
+// names both.
+//
+// The credentials are read here and only on the S3 branch: a lake on disk has
+// nothing to authenticate to, and reading S3_ACCESS_KEY for it would make an
+// unset variable look relevant to a failure that has nothing to do with it.
+func destinationOf(o drainOpts) (lake.Destination, error) {
+	dir, s3 := o.lakeDir != "", o.s3Endpoint != "" || o.s3Bucket != ""
+	switch {
+	case dir && s3:
+		return nil, errors.New("--lake-dir and --s3-endpoint/--s3-bucket name two different destinations; pass one of them")
+	case !dir && !s3:
+		return nil, errors.New("no destination: pass --lake-dir <path> for a lake on this machine, " +
+			"or --s3-endpoint and --s3-bucket for an object store")
+	case dir:
+		return lake.NewDirStore(o.lakeDir)
+	case o.s3Endpoint == "":
+		return nil, errors.New("--s3-bucket without --s3-endpoint: there is no store to put the bucket on")
+	case o.s3Bucket == "":
+		return nil, errors.New("--s3-endpoint without --s3-bucket: there is no bucket to put the objects in")
+	}
+	return lake.NewUploader(o.s3Endpoint,
+		os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), o.s3SSL, o.s3Bucket)
 }
 
 func newDrainStreamCmd(origin, stream, subject string, envelope row.Envelope, short string) *cobra.Command {
@@ -92,8 +126,12 @@ func newDrainStreamCmd(origin, stream, subject string, envelope row.Envelope, sh
 	// The durable consumer name is a thing in NATS, not in this binary.
 	// Renaming it orphans the existing consumer and replays the stream.
 	f.StringVar(&o.durable, "durable", "sink-"+origin, "durable consumer name")
-	f.StringVar(&o.s3Endpoint, "s3-endpoint", envOr("S3_ENDPOINT", "127.0.0.1:9000"), "S3 endpoint host:port")
-	f.StringVar(&o.s3Bucket, "s3-bucket", envOr("S3_BUCKET", "garm-lake"), "S3 bucket")
+	// The two destinations are mutually exclusive and neither is a default.
+	// --lake-dir is the whole lake on this machine: the same Parquet under the
+	// same keys, as paths, for a developer with no object store.
+	f.StringVar(&o.lakeDir, "lake-dir", envOr("LAKE_DIR", ""), "write the lake to this directory instead of S3")
+	f.StringVar(&o.s3Endpoint, "s3-endpoint", envOr("S3_ENDPOINT", ""), "S3 endpoint host:port")
+	f.StringVar(&o.s3Bucket, "s3-bucket", envOr("S3_BUCKET", ""), "S3 bucket")
 	f.BoolVar(&o.s3SSL, "s3-ssl", false, "use TLS for S3")
 	f.StringVar(&o.keyPrefix, "key-prefix", origin, "object key prefix")
 	f.StringVar(&o.instance, "instance-id", "", "unique instance id (default hostname-pid)")
@@ -108,6 +146,14 @@ func newDrainStreamCmd(origin, stream, subject string, envelope row.Envelope, sh
 
 func runDrain(ctx context.Context, o drainOpts) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("origin", o.origin)
+
+	// The destination is settled before anything is connected to. A flag
+	// mistake should cost a line on stderr, not a durable consumer and a
+	// five-minute batch that fails at the first flush.
+	dest, err := destinationOf(o)
+	if err != nil {
+		return err
+	}
 
 	nc, err := nats.Connect(o.natsURL, nats.MaxReconnects(-1))
 	if err != nil {
@@ -136,26 +182,19 @@ func runDrain(ctx context.Context, o drainOpts) error {
 		return fmt.Errorf("consumer on stream %s: %w", o.stream, err)
 	}
 
-	// Empty S3_ACCESS_KEY means anonymous requests — right for a local dev
-	// stack with no IAM, and never for a real store.
-	up, err := lake.NewUploader(o.s3Endpoint,
-		os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), o.s3SSL, o.s3Bucket)
-	if err != nil {
-		return err
-	}
-	if err := up.EnsureBucket(ctx); err != nil {
+	if err := dest.Ensure(ctx); err != nil {
 		return err
 	}
 
 	logger.Info("sinkd drain started",
 		"nats", o.natsURL, "stream", o.stream, "durable", o.durable,
-		"s3", o.s3Endpoint, "bucket", o.s3Bucket, "instance", o.instance,
+		"destination", dest.Describe(), "key_prefix", o.keyPrefix, "instance", o.instance,
 		"batch_max_rows", o.cfg.BatchMaxRows, "batch_interval", o.cfg.BatchInterval.String(),
 		"ack_wait", ackWait(o.cfg).String())
 
 	d := &drain.Drainer{
 		Consumer: cons,
-		Sink:     &lake.ParquetSink{Uploader: up, KeyPrefix: o.keyPrefix, InstanceID: o.instance},
+		Sink:     &lake.ParquetSink{Dest: dest, KeyPrefix: o.keyPrefix, InstanceID: o.instance},
 		Dead:     &drain.JetStreamDeadLetter{JS: js, Origin: o.origin},
 		Envelope: o.envelope,
 		Cfg:      o.cfg,
