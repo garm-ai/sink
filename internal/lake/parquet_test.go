@@ -115,6 +115,7 @@ func TestEveryValueLandsInItsOwnColumn(t *testing.T) {
 		RedactionCount:            8,
 		DisclosedCount:            9,
 		ErrorDetail:               "v_error_detail",
+		ExecutionSubject:          "v_execution_subject",
 	}
 	want := map[string]string{
 		"event_id": "v_event_id", "time": "2026-09-22 10:00:00 +0000 UTC",
@@ -135,7 +136,8 @@ func TestEveryValueLandsInItsOwnColumn(t *testing.T) {
 		"compartments_effective": "v_compartments_effective",
 		"redaction_plan":         "v_redaction_plan", "redaction_count": "8",
 		"disclosed_count": "9", "error_detail": "v_error_detail",
-		"date": "2026-09-22 00:00:00 +0000 UTC",
+		"execution_subject": "v_execution_subject",
+		"date":              "2026-09-22 00:00:00 +0000 UTC",
 	}
 
 	dir := t.TempDir()
@@ -203,5 +205,23 @@ func TestWritingNoRowsWritesNothingRatherThanAnEmptyFile(t *testing.T) {
 	}
 	if len(found) != 0 {
 		t.Fatalf("an empty flush left files behind: %v", found)
+	}
+}
+
+// The lake's schema is row.Columns plus the derived partition column, in
+// that order. `sinkd tail` prints row.Columns, so this is the test that
+// a line on a terminal and a row in the lake are one schema.
+func TestTheParquetSchemaIsTheRowsColumnsPlusDate(t *testing.T) {
+	got := lake.Columns()
+	if len(got) != len(row.Columns)+1 {
+		t.Fatalf("lake has %d columns, row has %d; want row's plus date", len(got), len(row.Columns))
+	}
+	for i, c := range row.Columns {
+		if got[i] != c.Name {
+			t.Errorf("column %d: lake %q, row %q", i, got[i], c.Name)
+		}
+	}
+	if got[len(got)-1] != "date" {
+		t.Errorf("last column is %q, want the partition column date", got[len(got)-1])
 	}
 }

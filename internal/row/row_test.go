@@ -2,6 +2,8 @@ package row_test
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	ledgerv1 "github.com/garm-ai/garm/contracts/garm/ledger/v1"
+	ledgerv1 "github.com/garm-ai/contracts/garm/ledger/v1"
 	"github.com/garm-ai/sink/internal/row"
 )
 
@@ -35,6 +37,7 @@ func event(id string, when time.Time) *ledgerv1.Event {
 		RedactionPlan:         "sha256:planhash",
 		RedactionCount:        3,
 		ErrorDetail:           "user with email ada@corp.com not found",
+		ExecutionSubject:      "runner:nightly-recon",
 	}
 }
 
@@ -79,6 +82,7 @@ func TestAnEventBecomesEveryColumnItCarries(t *testing.T) {
 		{"RedactionPlan", r.RedactionPlan, "sha256:planhash"},
 		{"RedactionCount", r.RedactionCount, int32(3)},
 		{"ErrorDetail", r.ErrorDetail, "user with email ada@corp.com not found"},
+		{"ExecutionSubject", r.ExecutionSubject, "runner:nightly-recon"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %v, want %v", c.field, c.got, c.want)
@@ -95,6 +99,23 @@ func TestPrincipalKindReachesTheRow(t *testing.T) {
 	rows, _ := row.Decode(row.EnvelopeEvent, marshal(t, ev))
 	if len(rows) != 1 || rows[0].PrincipalKind != "PRINCIPAL_KIND_SERVICE" {
 		t.Fatalf("principal_kind did not reach the row: %+v", rows)
+	}
+}
+
+// execution_subject carries the runner that made the call for someone else,
+// and is empty when there was none. Both halves are asserted: a column that is
+// always filled distinguishes nothing, so "" is a value here — "a direct call"
+// — and not an absence.
+func TestExecutionSubjectCarriesTheRunnerAndIsEmptyForADirectCall(t *testing.T) {
+	ev := event("ev-exec", time.Now().UTC().Truncate(time.Second))
+	rows, _ := row.Decode(row.EnvelopeEvent, marshal(t, ev))
+	if len(rows) != 1 || rows[0].ExecutionSubject != "runner:nightly-recon" {
+		t.Fatalf("execution_subject did not reach the row: %+v", rows)
+	}
+	ev.ExecutionSubject = ""
+	rows, _ = row.Decode(row.EnvelopeEvent, marshal(t, ev))
+	if len(rows) != 1 || rows[0].ExecutionSubject != "" {
+		t.Fatalf("a direct call did not produce an empty execution_subject: %+v", rows)
 	}
 }
 
@@ -229,5 +250,52 @@ func TestTheWrongEnvelopeFailsRatherThanInventingARow(t *testing.T) {
 	}
 	if len(bad) == 0 {
 		t.Fatal("an Event decoded as a Batch produced neither rows nor rejects")
+	}
+}
+
+// Columns is the schema the lake writes and tail prints. Every field of Row
+// must be in it exactly once, and every column must read its own field: a
+// field added to Row and not here is a value that never leaves the process,
+// and two columns reading the same field is a shift-by-one nobody sees.
+func TestEveryRowFieldIsExactlyOneColumn(t *testing.T) {
+	var r row.Row
+	v := reflect.ValueOf(&r).Elem()
+	if v.NumField() != len(row.Columns) {
+		t.Fatalf("Row has %d fields and Columns has %d entries", v.NumField(), len(row.Columns))
+	}
+	// Give every field a value unlike every other field's.
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		switch f.Kind() {
+		case reflect.String:
+			f.SetString(fmt.Sprintf("field-%d", i))
+		case reflect.Int64, reflect.Int32:
+			f.SetInt(int64(1000 + i))
+		case reflect.Float64:
+			f.SetFloat(float64(i) + 0.5)
+		case reflect.Bool:
+			f.SetBool(true)
+		case reflect.Struct: // time.Time
+			f.Set(reflect.ValueOf(time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC)))
+		default:
+			t.Fatalf("field %s has kind %s, which this test does not know how to fill", v.Type().Field(i).Name, f.Kind())
+		}
+	}
+	seen := map[string]string{}
+	for _, c := range row.Columns {
+		got := fmt.Sprint(c.Get(r))
+		if got == "" || got == "0" || got == "false" {
+			t.Errorf("column %q reads a zero value from a fully populated row", c.Name)
+		}
+		if other, dup := seen[got]; dup && got != "true" {
+			t.Errorf("columns %q and %q read the same field", other, c.Name)
+		}
+		seen[got] = c.Name
+		if _, ok := row.ColumnNamed(c.Name); !ok {
+			t.Errorf("ColumnNamed(%q) does not find its own column", c.Name)
+		}
+	}
+	if _, ok := row.ColumnNamed("no_such_column"); ok {
+		t.Error("ColumnNamed found a column that does not exist")
 	}
 }

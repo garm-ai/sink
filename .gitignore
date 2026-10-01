@@ -2,7 +2,7 @@
 # named after the package, so it is listed at the root as a backstop even
 # though bin/ is the documented output path.
 bin/
-/garm-sink
+/sinkd
 
 # Test and coverage output
 *.out

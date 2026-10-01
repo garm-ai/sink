@@ -2,21 +2,27 @@ package drain_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	_ "github.com/marcboeker/go-duckdb/v2"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	ledgerv1 "github.com/garm-ai/garm/contracts/garm/ledger/v1"
-	"github.com/garm-ai/garm/contracts/wire"
+	ledgerv1 "github.com/garm-ai/contracts/garm/ledger/v1"
+	"github.com/garm-ai/contracts/wire"
 	"github.com/garm-ai/sink/internal/drain"
+	"github.com/garm-ai/sink/internal/lake"
 	"github.com/garm-ai/sink/internal/row"
 	"github.com/garm-ai/sink/internal/streams"
 )
@@ -546,4 +552,77 @@ func firstDeadLetter(t *testing.T, js jetstream.JetStream) jetstream.Msg {
 		t.Fatal("no dead letter could be read back")
 	}
 	return msg
+}
+
+// The whole path, once: a message on a real broker, through the drain, into a
+// lake on disk, read back with the engine a developer would point at it.
+//
+// This became possible to write when the local destination arrived: it needs
+// no object store, so nothing has to be stood up for it. The S3 half of the
+// path is still untested end to end — see KNOWN-GAPS — but everything up to
+// the PUT is the same code, and the keys are built in one place for both.
+func TestAMessageOnTheStreamBecomesQueryableParquetInALakeOnDisk(t *testing.T) {
+	js, cons := ledgerFixture(t)
+	root := t.TempDir()
+	dest, err := lake.NewDirStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dest.Ensure(ctx5(t)); err != nil {
+		t.Fatal(err)
+	}
+	publishBatch(t, js, "e", 3)
+
+	run(t, &drain.Drainer{
+		Consumer: cons,
+		Sink:     &lake.ParquetSink{Dest: dest, KeyPrefix: "ledger", InstanceID: "box-77"},
+		Dead:     &drain.JetStreamDeadLetter{JS: js, Origin: "ledger"},
+		Envelope: row.EnvelopeBatch,
+		Cfg:      drain.Config{BatchMaxRows: 3, BatchInterval: time.Second, FetchMax: 8},
+	})
+	eventually(t, "a part file under the lake directory", func() bool {
+		return len(parquetFiles(t, root)) > 0
+	})
+	eventually(t, "the messages to be acked", func() bool { return drained(t, cons) })
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// The query from the README, against a local path.
+	glob := filepath.Join(root, "ledger", "**", "*.parquet")
+	var count int
+	var tenant, app string
+	if err := db.QueryRow(fmt.Sprintf(
+		`SELECT count(*), any_value(tenant), any_value(app)
+		 FROM read_parquet('%s', hive_partitioning=true)`, glob)).Scan(&count, &tenant, &app); err != nil {
+		t.Fatalf("reading %s: %v", glob, err)
+	}
+	if count != 3 || tenant != "acme" || app != "svc" {
+		t.Fatalf("the lake holds count=%d tenant=%q app=%q, want the three published events", count, tenant, app)
+	}
+	// And the hive path is on disk, not just in the file: the partition a row
+	// lands in is what lets a reader prune before it opens anything.
+	for _, p := range parquetFiles(t, root) {
+		if !strings.Contains(filepath.ToSlash(p), "/ledger/date=") || !strings.Contains(filepath.ToSlash(p), "/app=svc/") {
+			t.Errorf("%s is not on a hive path", p)
+		}
+	}
+}
+
+func parquetFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".parquet") {
+			return err
+		}
+		out = append(out, p)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

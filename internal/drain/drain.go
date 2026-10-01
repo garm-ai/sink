@@ -98,7 +98,7 @@ type Config struct {
 //
 // The cost of the interval is honest: up to five minutes of rows sit unacked
 // in JetStream. They are not lost — that is what unacked means — but the
-// stream must be sized to hold them, which is what `garm-sink provision`
+// stream must be sized to hold them, which is what `sinkd provision`
 // accounts for.
 const (
 	DefaultBatchMaxRows  = 250_000

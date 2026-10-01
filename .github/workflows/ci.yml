@@ -1,4 +1,4 @@
-# CI for garm-sink.
+# CI for sink.
 #
 # Two jobs. The first is the ordinary one. The second asserts the boundary this
 # repository exists to hold — asserted rather than documented, because a single
@@ -53,8 +53,8 @@ jobs:
       # The inversion this repository is built on.
       #
       # garmd publishes to a NATS stream and this drains it. The contract
-      # between them is the wire format in garm-ai/garm and the subject names
-      # in its wire package — never a Go import, in either direction.
+      # between them is the wire format in garm-ai/contracts and the subject
+      # names in its wire package — never a Go import, in either direction.
       #
       # An edge this way would put DuckDB (cgo, tens of megabytes of static
       # library) and an S3 client into the dependency graph of a daemon that
@@ -64,10 +64,10 @@ jobs:
       - name: no dependency on the daemon
         run: |
           if go list -deps ./... 2>/dev/null | grep -E 'garm-ai/garmd'; then
-            echo "::error::garm-sink depends on garmd; the record stream is data, not an import" >&2
+            echo "::error::sinkd depends on garmd; the record stream is data, not an import" >&2
             exit 1
           fi
-          echo "clean: garm-sink depends on no daemon"
+          echo "clean: sinkd depends on no daemon"
 
       # Nor on anything that implements tools, mints identities, or is the
       # tool-side runtime. A lake reads records; it has no business linking
@@ -75,18 +75,21 @@ jobs:
       - name: no dependency on a producer
         run: |
           if go list -deps ./... 2>/dev/null | grep -E 'garm-ai/(devkit|examples|tools|agent|tool-go|tool-python)'; then
-            echo "::error::garm-sink depends on something that produces records; it only reads them" >&2
+            echo "::error::sinkd depends on something that produces records; it only reads them" >&2
             exit 1
           fi
-          echo "clean: garm-sink depends on no record producer"
+          echo "clean: sinkd depends on no record producer"
 
-      # And the one edge that IS allowed must stay thin: the contracts, not the
-      # CLI's internals. Importing garm's policy compiler or command internals
-      # would make a Parquet writer's build depend on the contract language's.
-      - name: the only edge to garm is its contracts
+      # And the one garm-ai edge that IS allowed is the contract module. The
+      # contract used to be a directory inside garm-ai/garm, so the check used
+      # to be "reach its contracts and nothing else"; since the split,
+      # garm-ai/garm is the command line tool and there is nothing in it this
+      # may link at all. A Parquet writer whose build depended on a policy
+      # compiler is exactly what this refuses.
+      - name: the only garm-ai edge is the contract module
         run: |
-          if go list -deps ./... 2>/dev/null | grep -E 'garm-ai/garm/(internal|policy|cmd)'; then
-            echo "::error::garm-sink reaches past garm's contracts into its implementation" >&2
+          if go list -deps ./... 2>/dev/null | grep -E '^github.com/garm-ai/garm(/|$)'; then
+            echo "::error::sinkd links the garm CLI; the contract module is the only allowed edge" >&2
             exit 1
           fi
-          echo "clean: garm-sink uses garm's contracts only"
+          echo "clean: sinkd links github.com/garm-ai/contracts and no other garm-ai module"

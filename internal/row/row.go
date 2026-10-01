@@ -1,10 +1,10 @@
 // Package row turns a wire message into Parquet rows.
 //
-// The wire type is garm.ledger.v1.Event, from github.com/garm-ai/garm. That
-// module is the ONLY thing this repository and garmd share: garmd publishes,
-// this drains, and neither imports the other. A Go import between them would
-// put DuckDB and an S3 client in a request path's dependency graph, and would
-// make the lake's release cadence the daemon's problem.
+// The wire type is garm.ledger.v1.Event, from github.com/garm-ai/contracts.
+// That module is the ONLY thing this repository and garmd share: garmd
+// publishes, this drains, and neither imports the other. A Go import between
+// them would put DuckDB and an S3 client in a request path's dependency graph,
+// and would make the lake's release cadence the daemon's problem.
 //
 // The two streams are framed differently and that is a property of the
 // streams, not something to sniff per message. The ledger carries
@@ -22,8 +22,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	ledgerv1 "github.com/garm-ai/garm/contracts/garm/ledger/v1"
-	"github.com/garm-ai/garm/contracts/ledger"
+	ledgerv1 "github.com/garm-ai/contracts/garm/ledger/v1"
+	"github.com/garm-ai/contracts/ledger"
 )
 
 // Envelope is how one stream's messages are framed.
@@ -108,6 +108,20 @@ type Row struct {
 	// sensitive field in the registry that produced it, and a lake that
 	// treats this column like the others has undone the redaction.
 	ErrorDetail string
+
+	// ExecutionSubject is the `exec.sub` of the caller's token: the runner
+	// that executed this call for someone else, EMPTY when there was none.
+	//
+	// The empty case is what makes the column worth having — a column that is
+	// always filled distinguishes nothing. Beside principal_subject,
+	// principal_actor and chain_depth it answers the question an auditor
+	// actually asks: which machine identity acted, on whose behalf.
+	//
+	// It arrived in the contract at garm v0.14.0 as field 71 and became a
+	// column here at v0.7.0, so parts written before that have no such column
+	// and read back NULL. NULL and "" are deliberately NOT the same thing —
+	// see README, "execution_subject, NULL and empty".
+	ExecutionSubject string
 }
 
 // Reason is why one message, or one event inside one, could not become a row.
@@ -291,7 +305,8 @@ func FromProto(p *ledgerv1.Event) (Row, error) {
 		RedactionCount:            int32(ev.RedactionCount),
 		DisclosedCount:            int32(ev.DisclosedCount),
 
-		ErrorDetail: ev.ErrorDetail,
+		ErrorDetail:      ev.ErrorDetail,
+		ExecutionSubject: ev.ExecutionSubject,
 	}, nil
 }
 
@@ -322,4 +337,78 @@ func listJSON(v []string) string {
 		return "[]"
 	}
 	return string(b)
+}
+
+// Column is one column of the lake's schema: its name, and how to read it
+// from a Row.
+type Column struct {
+	Name string
+	Get  func(Row) any
+}
+
+// Columns is the schema, in order — the ONE list of what a row is called
+// when it leaves this process.
+//
+// The Parquet writer builds its DDL from it and `sinkd tail` prints keys
+// from it, so a column added here is added to both, and a name can never be
+// spelled one way in the lake and another way on a terminal. The partition
+// column `date` is not here: the writer derives it from `time`, and a
+// derived column belongs to the layout, not to the row.
+var Columns = []Column{
+	{"event_id", func(r Row) any { return r.EventID }},
+	{"time", func(r Row) any { return r.Time }},
+	{"tenant", func(r Row) any { return r.Tenant }},
+	{"app", func(r Row) any { return r.App }},
+	{"feature", func(r Row) any { return r.Feature }},
+	{"run_id", func(r Row) any { return r.RunID }},
+	{"correlation_id", func(r Row) any { return r.CorrelationID }},
+	{"causation_id", func(r Row) any { return r.CausationID }},
+	{"budget_id", func(r Row) any { return r.BudgetID }},
+	{"tags_json", func(r Row) any { return r.TagsJSON }},
+	{"prompt_name", func(r Row) any { return r.PromptName }},
+	{"prompt_hash", func(r Row) any { return r.PromptHash }},
+	{"alias", func(r Row) any { return r.Alias }},
+	{"resolved_model", func(r Row) any { return r.ResolvedModel }},
+	{"model_overridden", func(r Row) any { return r.ModelOverridden }},
+	{"input_tokens", func(r Row) any { return r.InputTokens }},
+	{"output_tokens", func(r Row) any { return r.OutputTokens }},
+	{"cached_tokens", func(r Row) any { return r.CachedTokens }},
+	{"reasoning_tokens", func(r Row) any { return r.ReasoningTokens }},
+	{"cost_usd", func(r Row) any { return r.CostUSD }},
+	{"cost_source", func(r Row) any { return r.CostSource }},
+	{"latency_ms", func(r Row) any { return r.LatencyMS }},
+	{"provider_request_id", func(r Row) any { return r.ProviderRequestID }},
+	{"fallback_used", func(r Row) any { return r.FallbackUsed }},
+	{"outcome", func(r Row) any { return r.Outcome }},
+	{"error_kind", func(r Row) any { return r.ErrorKind }},
+	{"policy_mode", func(r Row) any { return r.PolicyMode }},
+	{"policy_violations", func(r Row) any { return r.PolicyViolationsJSON }},
+	{"tool", func(r Row) any { return r.Tool }},
+	{"principal_subject", func(r Row) any { return r.PrincipalSubject }},
+	{"principal_actor", func(r Row) any { return r.PrincipalActor }},
+	{"principal_kind", func(r Row) any { return r.PrincipalKind }},
+	{"chain_depth", func(r Row) any { return r.ChainDepth }},
+	{"clearance_effective", func(r Row) any { return r.ClearanceEffective }},
+	{"compartments_effective", func(r Row) any { return r.CompartmentsEffectiveJSON }},
+	{"redaction_plan", func(r Row) any { return r.RedactionPlan }},
+	{"redaction_count", func(r Row) any { return r.RedactionCount }},
+	{"disclosed_count", func(r Row) any { return r.DisclosedCount }},
+	{"error_detail", func(r Row) any { return r.ErrorDetail }},
+	// execution_subject is appended rather than filed next to
+	// principal_subject, where it reads better, because appending is what
+	// makes it additive: every column already in the lake keeps its ordinal,
+	// and a part written before v0.7.0 differs from one written after by a
+	// trailing column and nothing else. It is also the contract's own order —
+	// field 71, after error_detail's 70.
+	{"execution_subject", func(r Row) any { return r.ExecutionSubject }},
+}
+
+// ColumnNamed finds a column by its lake name.
+func ColumnNamed(name string) (Column, bool) {
+	for _, c := range Columns {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return Column{}, false
 }

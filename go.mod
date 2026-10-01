@@ -3,7 +3,7 @@ module github.com/garm-ai/sink
 go 1.26.0
 
 require (
-	github.com/garm-ai/garm v0.8.0
+	github.com/garm-ai/contracts v0.2.0
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/nats-io/nats-server/v2 v2.15.0 // test only: an embedded broker, because ack, nak, term and redelivery are the broker's behaviour and a fake cannot be wrong about them convincingly

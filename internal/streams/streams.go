@@ -24,7 +24,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/garm-ai/garm/contracts/wire"
+	"github.com/garm-ai/contracts/wire"
 )
 
 // The dead-letter stream. Its name and subject are this repository's to

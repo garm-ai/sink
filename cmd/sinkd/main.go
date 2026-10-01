@@ -1,4 +1,4 @@
-// Command garm-sink drains the garm record streams into a queryable lake.
+// Command sinkd drains the garm record streams into a queryable lake.
 //
 // NATS JetStream in, micro-batched ZSTD Parquet on an S3-compatible store out,
 // hive-partitioned so that DuckDB — and later Iceberg or DuckLake — reads it
@@ -14,7 +14,7 @@
 //
 // It also has no Go dependency on garmd, in either direction, and CI asserts
 // it. garmd publishes to a stream; this consumes it. The contract between them
-// is the wire format in github.com/garm-ai/garm and the subject names in its
+// is the wire format in github.com/garm-ai/contracts and the subject names in its
 // wire package — never an import. An import edge would make the daemon's build
 // carry a Parquet writer, and would make this repository's release cadence the
 // daemon's problem.
@@ -32,16 +32,16 @@ import (
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "garm-sink:", err)
+		fmt.Fprintln(os.Stderr, "sinkd:", err)
 		os.Exit(1)
 	}
 }
 
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "garm-sink",
+		Use:   "sinkd",
 		Short: "Drain the garm record streams into a Parquet lake",
-		Long: "garm-sink consumes the garm ledger and audit streams from NATS\n" +
+		Long: "sinkd consumes the garm ledger and audit streams from NATS\n" +
 			"JetStream and lands them as hive-partitioned ZSTD Parquet on an\n" +
 			"S3-compatible store.\n\n" +
 			"Delivery is at-least-once, so the lake holds duplicate rows by\n" +
@@ -49,7 +49,7 @@ func newRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd(), newProvisionCmd(), newDrainCmd())
+	root.AddCommand(newVersionCmd(), newProvisionCmd(), newDrainCmd(), newTailCmd())
 	// The root refuses too. This binary runs unattended, and a parent that
 	// prints help and exits 0 is a green deploy that moved no data.
 	return cli.RequireSubcommand(root)
